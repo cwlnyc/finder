@@ -177,3 +177,22 @@ test('the sources list reports what has been pulled', async () => {
   assert.equal(sources.find((s) => s.id === 'dob-permits').count, 0);
   assert.ok(sources.every((s) => s.confidence), 'the UI needs this to warn about unverified columns');
 });
+
+test('the table and the CSV agree on which columns exist', async () => {
+  // These used to be two hand-maintained lists. If they drift, the browser
+  // shows a column the download lacks (or the reverse) and nothing errors.
+  const data = await feed('days=0');
+  const csv = await (await fetch(`${base}/api/export.csv?source=dcwp-licenses&days=0`)).text();
+  const header = csv.split('\r\n')[0].split(',');
+  assert.deepEqual(data.columns.map(([key]) => key), header);
+});
+
+test('the feed labels its columns for display', async () => {
+  const data = await feed('days=0');
+  assert.ok(data.columns.length > 0);
+  for (const entry of data.columns) {
+    assert.equal(entry.length, 2, 'each column is a [key, label] pair');
+    assert.equal(typeof entry[1], 'string');
+  }
+  assert.deepEqual(data.columns[0], ['date', 'Date']);
+});

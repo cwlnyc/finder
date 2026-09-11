@@ -98,6 +98,37 @@ export function breakdown(rows) {
   return { borough: countBy(rows, 'borough'), category: countBy(rows, 'category') };
 }
 
+/**
+ * Display order and labels for record columns, across the CLI, the CSV export
+ * and the web table. Defined once: three copies of this list drift the moment
+ * a source gains a field, and the symptom is a column silently missing from
+ * the export rather than an error.
+ *
+ * Not every source has every column -- `presentColumns` drops the empty ones.
+ */
+export const DISPLAY_COLUMNS = [
+  ['date', 'Date'],
+  ['name', 'Business'],
+  ['category', 'Category'],
+  ['permittee', 'Contractor'],
+  ['status', 'Status'],
+  ['building', 'No.'],
+  ['street', 'Street'],
+  ['borough', 'Borough'],
+  ['zip', 'ZIP'],
+  ['phone', 'Phone'],
+  ['expires', 'Expires'],
+  ['licenseType', 'Licensee'],
+  ['permitType', 'Permit'],
+  ['job', 'Job #'],
+  ['id', 'ID'],
+];
+
+/** The columns that actually carry a value in these rows, in display order. */
+export function presentColumns(rows) {
+  return DISPLAY_COLUMNS.filter(([key]) => rows.some((r) => r[key] !== '' && r[key] != null));
+}
+
 // --- CSV ---------------------------------------------------------------
 
 const NUMERIC = /^-?\d+(\.\d+)?$/;

@@ -7,8 +7,8 @@ import test from 'node:test';
 import { addDays, compareDay, daysBetween, parseDay, today, weekStart } from './normalize.mjs';
 import { assertMapping, buildUrl, fetchRows, MappingError, normalizeRow } from './socrata.mjs';
 import { mergeStore, readStore } from './store.mjs';
-import { csvCell, filterRows, toCsv, weeklyStats } from './digest.mjs';
-import { getSource } from './sources.mjs';
+import { csvCell, DISPLAY_COLUMNS, filterRows, presentColumns, toCsv, weeklyStats } from './digest.mjs';
+import { getSource, SOURCES } from './sources.mjs';
 
 const LICENSES = getSource('dcwp-licenses');
 
@@ -368,4 +368,74 @@ test('an unparseable date becomes empty rather than poisoning the buckets', () =
   const row = normalizeRow(LICENSES, { license_nbr: 'L2', business_name: 'Shop', license_creation_date: 'N/A' });
   assert.equal(row.date, '');
   assert.equal(filterRows([row], {}).length, 0);
+});
+
+// --- source definitions ------------------------------------------------
+
+test('every source filters on the same column it stores as the date', () => {
+  // If dateField and fields.date drift apart, the $where narrows on one column
+  // while normalizeRow reads another: you fetch the right rows and store blank
+  // dates, or filter on a column you never keep. Neither raises anything.
+  for (const source of SOURCES) {
+    assert.equal(source.dateField, source.fields.date, `${source.id} filters and stores different columns`);
+  }
+});
+
+test('every required field is actually mapped', () => {
+  for (const source of SOURCES) {
+    for (const field of source.required) {
+      assert.ok(source.fields[field], `${source.id} requires '${field}' but does not map it`);
+    }
+  }
+});
+
+test('every mapped field has a display column', () => {
+  // A field mapped but missing from DISPLAY_COLUMNS is fetched, stored, and
+  // then silently dropped from both the table and the CSV.
+  const known = new Set(DISPLAY_COLUMNS.map(([key]) => key));
+  for (const source of SOURCES) {
+    for (const field of Object.keys(source.fields)) {
+      assert.ok(known.has(field), `${source.id} maps '${field}', which nothing will ever display`);
+    }
+  }
+});
+
+test('presentColumns keeps display order and drops empty columns', () => {
+  const rows = [
+    { date: '2026-08-10', name: 'Alpha', category: '', phone: '718-555-0100', id: 'L1' },
+    { date: '2026-08-11', name: 'Beta', category: '', phone: '', id: 'L2' },
+  ];
+  const keys = presentColumns(rows).map(([key]) => key);
+  assert.deepEqual(keys, ['date', 'name', 'phone', 'id'], 'category is empty everywhere, so it is dropped');
+  assert.deepEqual(
+    keys,
+    DISPLAY_COLUMNS.map(([k]) => k).filter((k) => keys.includes(k)),
+    'and the order follows DISPLAY_COLUMNS, not the order of the object keys',
+  );
+  assert.deepEqual(presentColumns([]), [], 'no rows means no columns');
+});
+
+test('presentColumns labels every column it returns', () => {
+  const [, label] = presentColumns([{ phone: '718-555-0100' }])[0];
+  assert.equal(label, 'Phone');
+});
+
+test('secondary date columns are parsed too, not just the primary one', () => {
+  // Regression: only `date` was collapsed, so an expiry kept its
+  // 'T00:00:00.000' tail and rendered as a truncated string in the table.
+  const row = normalizeRow(LICENSES, {
+    license_nbr: 'L1',
+    business_name: 'Shop',
+    license_creation_date: '2026-09-07T00:00:00.000',
+    lic_expir_dd: '2028-06-01T00:00:00.000',
+  });
+  assert.equal(row.date, '2026-09-07');
+  assert.equal(row.expires, '2028-06-01');
+});
+
+test('a source without an expiry column is unaffected', () => {
+  const permits = getSource('dob-permits');
+  const row = normalizeRow(permits, { permit_si_no: 'P1', issuance_date: '2026-09-07T00:00:00.000' });
+  assert.equal(row.date, '2026-09-07');
+  assert.ok(!('expires' in row), 'no phantom column appears for sources that lack one');
 });

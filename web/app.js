@@ -7,10 +7,6 @@
 
 const $ = (id) => document.getElementById(id);
 const FILTER_IDS = ['days', 'borough', 'category', 'status', 'contains'];
-const COLUMNS = [
-  ['date', 'Date'], ['name', 'Business'], ['dba', 'DBA'], ['category', 'Category'],
-  ['status', 'Status'], ['borough', 'Borough'], ['street', 'Street'], ['zip', 'ZIP'],
-];
 
 // A slice is worth selling at roughly 15/week; below ~8 it is not a product.
 const VERDICTS = [
@@ -227,8 +223,7 @@ function renderBreakdown(listId, entries) {
   }
 }
 
-function renderTable(rows, total) {
-  const columns = COLUMNS.filter(([key]) => rows.some((r) => r[key]));
+function renderTable(rows, total, columns) {
   const head = $('head-row');
   head.replaceChildren();
   for (const [, title] of columns) {
@@ -324,7 +319,7 @@ async function refresh({ push = true } = {}) {
   renderChart(lastWeeks);
   renderBreakdown('by-borough', data.breakdown.borough);
   renderBreakdown('by-category', data.breakdown.category);
-  renderTable(data.rows, data.total);
+  renderTable(data.rows, data.total, data.columns);
   $('download').href = `/api/export.csv?${query}`;
 }
 

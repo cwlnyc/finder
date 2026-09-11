@@ -5,7 +5,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { getSource, SOURCES } from './sources.mjs';
 import { fetchRows, MappingError, normalizeRow, probeSource } from './socrata.mjs';
 import { mergeStore, readStore, storePath } from './store.mjs';
-import { breakdown, completeness, filterRows, toCsv, weeklyStats } from './digest.mjs';
+import { breakdown, completeness, filterRows, presentColumns, toCsv, weeklyStats } from './digest.mjs';
 import { addDays, today } from './normalize.mjs';
 
 function parseArgs(argv) {
@@ -228,9 +228,7 @@ async function cmdDigest(flags, positional) {
     contains: flags.contains === true ? undefined : flags.contains,
   }).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 
-  const columns = ['date', 'name', 'dba', 'category', 'status', 'borough', 'street', 'zip', 'id'].filter((c) =>
-    rows.some((r) => r[c] !== '' && r[c] != null),
-  );
+  const columns = presentColumns(rows).map(([key]) => key);
 
   if (flags.csv) {
     const path = flags.csv === true ? `${source.id}-${today()}.csv` : flags.csv;
@@ -241,8 +239,8 @@ async function cmdDigest(flags, positional) {
 
   console.log(`\n${source.label} -- last ${days} days (${rows.length} records)\n`);
   for (const r of rows) {
-    const where = [r.street, r.borough].filter(Boolean).join(', ');
-    console.log(`${r.date}  ${r.name || r.dba || '(no name)'}`);
+    const where = [[r.building, r.street].filter(Boolean).join(' '), r.borough].filter(Boolean).join(', ');
+    console.log(`${r.date}  ${r.name || r.permittee || '(no name)'}`);
     if (r.category) console.log(`            ${r.category}${r.status ? ` -- ${r.status}` : ''}`);
     if (where) console.log(`            ${where}`);
   }

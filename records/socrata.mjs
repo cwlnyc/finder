@@ -4,6 +4,10 @@ import { parseDay } from './normalize.mjs';
 
 const PAGE_SIZE = 1000;
 
+// Canonical fields carrying a calendar date. Listed explicitly rather than
+// sniffed: a text column that merely looks like a date must not be rewritten.
+const DATE_FIELDS = new Set(['date', 'expires']);
+
 export class MappingError extends Error {
   constructor(message, details) {
     super(message);
@@ -75,11 +79,13 @@ export function normalizeRow(source, raw) {
     const value = raw[column];
     out[canonical] = value == null ? '' : String(value).trim();
   }
-  // Collapse the portal's timestamp to a calendar day at the one boundary where
+  // Collapse the portal's timestamps to calendar days at the one boundary where
   // raw data enters the system. Everything downstream -- week bucketing, range
   // filters, the store's sort -- assumes a bare 'YYYY-MM-DD' and goes quietly
   // wrong on '2026-09-07T00:00:00.000' rather than failing.
-  out.date = parseDay(out.date) ?? '';
+  for (const field of DATE_FIELDS) {
+    if (field in out) out[field] = parseDay(out[field]) ?? '';
+  }
   return out;
 }
 

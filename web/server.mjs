@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 import { SOURCES, getSource } from '../records/sources.mjs';
 import { readStore, storePath } from '../records/store.mjs';
-import { breakdown, completeness, filterRows, toCsv, weeklyStats } from '../records/digest.mjs';
+import { breakdown, completeness, filterRows, presentColumns, toCsv, weeklyStats } from '../records/digest.mjs';
 import { addDays, today } from '../records/normalize.mjs';
 
 const WEB_DIR = dirname(fileURLToPath(import.meta.url));
@@ -125,6 +125,9 @@ async function handleFeed(res, params, dataDir) {
     total: rows.length,
     truncated: rows.length > MAX_ROWS,
     rows: rows.slice(0, MAX_ROWS),
+    // The client renders whatever columns the server says are populated, so the
+    // table and the CSV can never disagree about a source's shape.
+    columns: presentColumns(rows.slice(0, MAX_ROWS)),
     stats: {
       median: stats.median,
       mean: stats.mean,
@@ -149,10 +152,7 @@ async function handleFeed(res, params, dataDir) {
 
 async function handleExport(res, params, dataDir) {
   const { source, rows } = await buildFeed(params, dataDir);
-  const columns = ['date', 'name', 'dba', 'category', 'status', 'borough', 'street', 'zip', 'id'].filter(
-    (c) => rows.some((r) => r[c] !== '' && r[c] != null),
-  );
-  const csv = toCsv(rows, columns);
+  const csv = toCsv(rows, presentColumns(rows).map(([key]) => key));
   const filename = `${source.id}-${today()}.csv`;
 
   res.writeHead(200, {

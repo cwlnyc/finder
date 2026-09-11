@@ -9,13 +9,11 @@ reaches it first — bookkeeper, insurer, POS reseller, supplier — wants to kn
 The records are public and free, but they sit behind clunky portals that nobody
 watches continuously. This watches them.
 
-## Read this before you trust a pull
+## Column names are verified
 
-**The Socrata column names in `records/sources.mjs` are unverified.** They were
-written in a sandbox with no route to `data.cityofnewyork.us`, so they are
-informed guesses. Some are probably wrong.
-
-That is why `probe` exists. Run it first:
+The Socrata column names in `records/sources.mjs` were checked against the live
+datasets with `probe` on 2026-09-11. Portals do reshape datasets, so if a pull
+starts refusing batches, re-check:
 
 ```bash
 node records/cli.mjs probe --all
@@ -26,9 +24,8 @@ repo declares, followed by the dataset's real column list. Fixing a wrong name
 is a one-line edit to the `fields` map in `records/sources.mjs` — nothing else
 in the codebase hardcodes a portal column name.
 
-If a name is wrong and you skip the probe, `pull` still refuses to write: it
-checks each batch and aborts if the required fields come back empty, rather than
-overwriting a good store with thousands of blank rows.
+`pull` also refuses to write a batch whose required fields come back empty,
+rather than overwriting a good store with thousands of blank rows.
 
 ## Quickstart
 
@@ -95,7 +92,7 @@ category or add a borough.
 
 | id | what | why it's interesting |
 |---|---|---|
-| `dcwp-applications` | DCWP license applications | Earliest signal — applied, not yet open, no vendors |
+| `dcwp-applications` | DCWP license applications | Earliest signal — applied, not yet open, no vendors. Filter `status` to pending. |
 | `dcwp-licenses` | DCWP issued licenses | Cleanest history, widest industry coverage |
 | `dob-permits` | DOB permit issuance | Different buyer: subs, equipment rental, dumpsters |
 
@@ -168,9 +165,15 @@ node records/cli.mjs pull dcwp-licenses --fixture path/to/rows.json
 
 ## Before you sell this
 
-- **Public records are public.** Business name, business address, license type —
-  fine to redistribute. Keep it to business information rather than anything
-  that reads as a personal phone number.
+- **Public records are public.** Business name, address, license type and
+  status are published by the city and fine to redistribute.
+- **`contact_phone` is the field to think about.** It is in the public dataset
+  and it is what makes a lead list worth paying for. It is also the field that
+  turns the product into a calling list — and for individual licensees (a
+  "Home Improvement Salesperson" is a person, not a company) it is often a
+  personal cell. Selling it is legal; the telemarketing rules land on whoever
+  dials, which is your buyer, not you. Drop `phone` from the `fields` map in
+  `records/sources.mjs` if you would rather not ship it at all.
 - **CAN-SPAM applies** to any email you send to people who didn't sign up.
 - **Payment processors require account holders to be 18+.** Stripe, PayPal and
   Square all do, because contracts with a minor are voidable. The normal

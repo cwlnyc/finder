@@ -1,10 +1,8 @@
 // Dataset definitions.
 //
-// IMPORTANT: the `fields` maps below were written without network access to the
-// portal, so the Socrata column names are informed guesses, not verified fact.
-// Run `node records/cli.mjs probe --all` on a machine with internet before
-// trusting any of it; the probe prints the dataset's real column list and
-// `pull` refuses to write a batch whose required fields come back empty.
+// Column names below were verified against the live portal with
+// `node records/cli.mjs probe --all` on 2026-09-11. Re-run probe if a pull
+// starts refusing batches -- the portals do reshape datasets.
 //
 // Fixing a wrong name is a one-line edit to the `fields` map here. Nothing
 // else in the codebase hardcodes a portal column name.
@@ -19,21 +17,28 @@ export const SOURCES = [
     why: 'A pending application is a business that has not opened and has no vendors yet.',
     domain: 'data.cityofnewyork.us',
     dataset: 'ptev-4hud',
-    dateField: 'start_date',
+    dateField: 'submission_date',
     // Only fields listed in `required` gate the staleness guard. Everything
     // else is best-effort: a blank borough is a worse lead, not a broken pull.
     required: ['id', 'date', 'name'],
     fields: {
       id: 'application_id',
-      date: 'start_date',
+      date: 'submission_date',
       name: 'business_name',
-      category: 'license_type',
+      // business_category is the industry ("Sidewalk Cafe"); license_type is
+      // the far coarser Business/Individual split. Slicing needs the former.
+      category: 'business_category',
+      licenseType: 'license_type',
       status: 'status',
-      borough: 'address_borough',
-      street: 'address_street_name',
-      zip: 'address_zip',
+      building: 'building_number',
+      street: 'street',
+      borough: 'borough',
+      zip: 'zip',
+      // Public record, and the field that makes a lead list worth paying for.
+      // See the README on what redistributing it commits you to.
+      phone: 'contact_phone',
     },
-    confidence: 'guess', // documented only as human labels ("Application ID")
+    confidence: 'verified',
   },
   {
     id: 'dcwp-licenses',
@@ -47,38 +52,44 @@ export const SOURCES = [
       id: 'license_nbr',
       date: 'license_creation_date',
       name: 'business_name',
-      dba: 'business_name_2',
-      // Portal docs disagree with themselves here: some list `industry`,
-      // others `business_category`. The probe settles it.
-      category: 'industry',
+      category: 'business_category',
+      licenseType: 'license_type',
       status: 'license_status',
-      borough: 'address_borough',
+      // Expiry drives a second product: renewals are a deadline someone sells against.
+      expires: 'lic_expir_dd',
+      building: 'address_building',
       street: 'address_street_name',
+      borough: 'address_borough',
       zip: 'address_zip',
+      phone: 'contact_phone',
     },
-    confidence: 'likely',
+    confidence: 'verified',
   },
   {
     id: 'dob-permits',
     label: 'DOB permit issuance (NYC)',
-    why: 'Different buyer entirely — subs, equipment rental, dumpsters. High volume.',
+    why: 'Different buyer entirely -- subs, equipment rental, dumpsters. High volume.',
     domain: 'data.cityofnewyork.us',
     dataset: 'ipu4-2q9a',
-    dateField: 'issuance_date',
     // permit_si_no is the row-unique key; job__ repeats across a job's permits.
+    dateField: 'issuance_date',
     required: ['id', 'date'],
     fields: {
       id: 'permit_si_no',
       date: 'issuance_date',
       name: 'owner_s_business_name',
       category: 'job_type',
+      permitType: 'permit_type',
       status: 'filing_status',
-      borough: 'borough',
+      building: 'house__',
       street: 'street_name',
+      borough: 'borough',
       zip: 'zip_code',
+      // The contractor on the job -- a different lead than the owner.
+      permittee: 'permittee_s_business_name',
       job: 'job__',
     },
-    confidence: 'likely',
+    confidence: 'verified',
   },
 ];
 
