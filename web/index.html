@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Records feed</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%232a78d6'/%3E%3Crect x='3.5' y='8' width='2' height='5' fill='white'/%3E%3Crect x='7' y='5' width='2' height='8' fill='white'/%3E%3Crect x='10.5' y='3' width='2' height='10' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <h1>Records feed</h1>
+    <p class="sub">Newly licensed and permitted businesses, New York City</p>
+  </div>
+  <div class="topbar-right">
+    <label class="field">
+      <span>Source</span>
+      <select id="source"></select>
+    </label>
+    <button id="theme" type="button" class="ghost" title="Toggle light/dark" aria-label="Toggle light and dark theme">◐</button>
+  </div>
+</header>
+
+<p id="confidence" class="banner" hidden></p>
+
+<main>
+  <!-- Filters in one row above the charts. -->
+  <form class="filters" id="filters" autocomplete="off">
+    <label class="field">
+      <span>Window</span>
+      <select id="days">
+        <option value="0">All data</option>
+        <option value="7">Last 7 days</option>
+        <option value="30">Last 30 days</option>
+        <option value="90" selected>Last 90 days</option>
+        <option value="180">Last 180 days</option>
+        <option value="365">Last year</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Borough</span>
+      <select id="borough"><option value="">Any</option></select>
+    </label>
+    <label class="field grow">
+      <span>Category</span>
+      <select id="category"><option value="">Any</option></select>
+    </label>
+    <label class="field">
+      <span>Status</span>
+      <select id="status"><option value="">Any</option></select>
+    </label>
+    <label class="field grow">
+      <span>Search</span>
+      <input id="contains" type="search" placeholder="name, street&hellip;">
+    </label>
+    <button type="button" id="reset" class="ghost">Reset</button>
+  </form>
+
+  <section id="empty" class="empty" hidden>
+    <h2>Nothing pulled yet</h2>
+    <p>This source has no local data. In another terminal:</p>
+    <pre><code id="empty-cmd"></code></pre>
+    <p class="muted">Run <code>node records/cli.mjs probe --all</code> first — the column
+    names in <code>records/sources.mjs</code> are unverified.</p>
+  </section>
+
+  <div id="content" hidden>
+    <section class="verdict-row">
+      <!-- Hero figure: the number that decides whether a slice is sellable. -->
+      <div class="tile hero">
+        <span class="tile-label">Median per week</span>
+        <strong class="hero-number" id="median">—</strong>
+        <span class="verdict" id="verdict"></span>
+      </div>
+      <div class="tile">
+        <span class="tile-label">Records in view</span>
+        <strong class="tile-number" id="total">—</strong>
+        <span class="tile-note" id="total-note"></span>
+      </div>
+      <div class="tile">
+        <span class="tile-label">Date range</span>
+        <strong class="tile-number small" id="range">—</strong>
+        <span class="tile-note" id="range-note"></span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Records per complete week</h2>
+        <p class="muted">
+          Whole Monday–Sunday weeks only. Partial weeks at either end are excluded —
+          counting them fakes a drought. Empty weeks are shown as real zeros.
+        </p>
+      </div>
+      <div class="chart-wrap">
+        <svg id="chart" class="chart" role="img" aria-labelledby="chart-title"></svg>
+        <span id="chart-title" class="visually-hidden">Weekly record counts</span>
+        <div id="tooltip" class="tooltip" hidden></div>
+      </div>
+      <p id="chart-empty" class="muted pad" hidden>
+        Not enough data for a weekly figure — widen the window.
+      </p>
+    </section>
+
+    <section class="split">
+      <div class="panel">
+        <div class="panel-head"><h2>By borough</h2></div>
+        <ul class="bars" id="by-borough"></ul>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h2>Top categories</h2></div>
+        <ul class="bars" id="by-category"></ul>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head row">
+        <div>
+          <h2>Records</h2>
+          <p class="muted" id="table-note"></p>
+        </div>
+        <a id="download" class="button" href="#" download>Download CSV</a>
+      </div>
+      <div class="table-wrap">
+        <table id="table">
+          <thead><tr id="head-row"></tr></thead>
+          <tbody id="body-rows"></tbody>
+        </table>
+      </div>
+      <p id="no-rows" class="muted pad" hidden>Nothing matches these filters.</p>
+    </section>
+  </div>
+
+  <p id="error" class="banner error" hidden></p>
+</main>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

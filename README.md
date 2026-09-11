@@ -1,7 +1,8 @@
 # finder
 
 Watches NYC public records for newly licensed and newly permitted businesses,
-dedupes them, and turns a filtered slice into a daily feed.
+dedupes them, and turns a filtered slice into a daily feed — browsable in a
+local web UI or scriptable from the CLI.
 
 The premise: a business that just got licensed has no vendors yet. Whoever
 reaches it first — bookkeeper, insurer, POS reseller, supplier — wants to know.
@@ -34,12 +35,43 @@ overwriting a good store with thousands of blank rows.
 ```bash
 node records/cli.mjs probe --all                      # 1. verify the mapping
 node records/cli.mjs pull dcwp-licenses --days 180    # 2. fetch history
-node records/cli.mjs stats dcwp-licenses              # 3. is there enough volume?
+npm run web                                           # 3. browse it
+```
+
+Then open **http://localhost:4000**.
+
+No dependencies. Node 20+.
+
+## The web UI
+
+`npm run web` serves a local page for slicing the data and exporting leads:
+
+- **Median per week**, with a verdict — whether the current slice has enough
+  volume to sell, recomputed as you filter
+- **Weekly volume chart** over complete weeks, with per-week hover
+- **Filters** for window, borough, category, status, and free text; the URL
+  carries them, so a promising slice can be bookmarked
+- **Breakdowns** by borough and category
+- **Download CSV** of the current slice — the table caps at 500 rows for speed,
+  the export never does
+
+```bash
+npm run web -- --port 4123    # if 4000 is taken
+PORT=4123 npm run web         # same thing
+```
+
+It binds to `127.0.0.1` only. The store holds contact-adjacent business data and
+the server has no authentication, so it is deliberately not reachable from the
+rest of your network.
+
+### CLI equivalents
+
+Everything in the UI is available headless, which is what a scheduled job wants:
+
+```bash
 node records/cli.mjs stats dcwp-licenses --borough Queens --category "Home Improvement"
 node records/cli.mjs digest dcwp-licenses --days 7 --csv leads.csv
 ```
-
-No dependencies. Node 20+.
 
 ## The command that matters
 
@@ -89,7 +121,15 @@ records/
   store.mjs      JSONL store, dedupe, atomic writes
   digest.mjs     filtering, weekly stats, CSV
   cli.mjs        command dispatch
+web/
+  server.mjs     HTTP server + JSON API (loopback only)
+  index.html     page structure
+  style.css      palette, light/dark
+  app.js         fetch + render (textContent only -- see below)
 ```
+
+The web layer reads the same store and calls the same `digest.mjs` functions the
+CLI does, so the two can never disagree about what a number means.
 
 Data lands in `records/data/*.jsonl`, which is gitignored — it's derived, and
 re-pullable.
@@ -110,6 +150,14 @@ just produce quietly wrong numbers:
 - partial weeks at the edges faking a volume drought
 - `=Best Cuts` executing as a formula when the lead CSV opens in Excel
 - a renamed column silently blanking the store
+- filter dropdowns rebuilt from filtered rows, which deletes every other option
+  the moment you pick one
+- the CSV export inheriting the table's 500-row display cap
+
+Business names come from a public portal, so they are external input. The client
+builds DOM nodes and assigns `textContent` — there is no `innerHTML` on any data
+path, and a record named `<img src=x onerror=...>` renders as those literal
+characters. There is a test for it, and it was verified in a real browser.
 
 Every command also runs offline against a fixture, which is how the pipeline
 gets exercised without network:

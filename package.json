@@ -3,11 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Watch NYC public records for newly registered/licensed businesses and turn them into a filtered daily feed.",
-  "engines": { "node": ">=20" },
+  "description": "Watch NYC public records for newly registered/licensed businesses, browse them locally, and export filtered lead lists.",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
+    "web": "node web/server.mjs",
+    "start": "node web/server.mjs",
     "records": "node records/cli.mjs",
     "probe": "node records/cli.mjs probe --all",
-    "test": "node --test records/*.test.mjs"
+    "test": "node --test records/*.test.mjs web/*.test.mjs"
   }
 }
