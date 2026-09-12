@@ -37,11 +37,14 @@ function num(value, fallback) {
 // the pipeline gets exercised in a sandbox where the portal is unreachable.
 async function fixtureFetch(path) {
   const rows = JSON.parse(await readFile(path, 'utf8'));
-  let served = false;
   return async (url) => {
-    const limit = Number(new URL(url).searchParams.get('$limit') ?? 1000);
-    const page = served ? [] : rows.slice(0, limit);
-    served = true;
+    // Honour $limit and $offset the way the portal does. Serving one page and
+    // then stopping made every fixture silently cap at 1000 rows, which is
+    // exactly the bug class this fixture exists to rule out.
+    const params = new URL(url).searchParams;
+    const limit = Number(params.get('$limit') ?? 1000);
+    const offset = Number(params.get('$offset') ?? 0);
+    const page = rows.slice(offset, offset + limit);
     return { ok: true, status: 200, json: async () => page, text: async () => '' };
   };
 }

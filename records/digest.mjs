@@ -32,7 +32,7 @@ function countBy(rows, key) {
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
-function median(values) {
+function medianOf(values) {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const mid = sorted.length >> 1;
@@ -80,10 +80,53 @@ export function weeklyStats(rows) {
     dated: dated.length,
     weeks,
     completeWeeks,
-    median: median(values),
+    median: medianOf(values),
     mean: values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0,
     range: { first, last, days: daysBetween(first, last) + 1 },
   };
+}
+
+/**
+ * Per-week rate for every value of `key` -- the table that answers "which
+ * slice is worth selling" without filtering to each one by hand.
+ *
+ * Every group is measured over the SAME list of complete weeks, taken from the
+ * whole result set rather than each group's own first and last record. A
+ * category that only appeared in March would otherwise be scored over its own
+ * three weeks and look busier than one steady all year.
+ */
+export function sliceBreakdown(rows, key) {
+  const overall = weeklyStats(rows);
+  const weeks = overall.completeWeeks.map((w) => w.week);
+  if (weeks.length === 0) return [];
+
+  const position = new Map(weeks.map((w, i) => [w, i]));
+  const groups = new Map();
+
+  for (const row of rows) {
+    if (!row.date) continue;
+    const at = position.get(weekStart(row.date));
+    if (at === undefined) continue; // falls in a partial week at either end
+    const value = row[key] || '';
+    let group = groups.get(value);
+    if (!group) {
+      group = { value, total: 0, counts: new Array(weeks.length).fill(0) };
+      groups.set(value, group);
+    }
+    group.counts[at]++;
+    group.total++;
+  }
+
+  return [...groups.values()]
+    .map(({ value, total, counts }) => ({
+      value,
+      total,
+      // Median, not mean: one bulk-upload week should not make a dead category
+      // look like a steady product.
+      perWeek: medianOf(counts),
+      weeks: weeks.length,
+    }))
+    .sort((a, b) => b.perWeek - a.perWeek || b.total - a.total);
 }
 
 export function completeness(rows, fields) {

@@ -104,14 +104,24 @@
       </p>
     </section>
 
-    <section class="split">
-      <div class="panel">
-        <div class="panel-head"><h2>By borough</h2></div>
-        <ul class="bars" id="by-borough"></ul>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Find a slice</h2>
+        <p class="muted">
+          Records per week for each value, measured over the same weeks so they compare fairly.
+          A category with lots of records but a low rate arrived in bursts, not steadily.
+          Click any row to filter to it.
+        </p>
       </div>
-      <div class="panel">
-        <div class="panel-head"><h2>Top categories</h2></div>
-        <ul class="bars" id="by-category"></ul>
+      <div class="split-tables">
+        <div>
+          <h3 class="sub-head">By category <span class="fill-note" id="fill-category"></span></h3>
+          <table class="slices"><tbody id="slice-category"></tbody></table>
+        </div>
+        <div>
+          <h3 class="sub-head">By borough <span class="fill-note" id="fill-borough"></span></h3>
+          <table class="slices"><tbody id="slice-borough"></tbody></table>
+        </div>
       </div>
     </section>
 

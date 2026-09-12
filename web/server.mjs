@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 import { SOURCES, getSource } from '../records/sources.mjs';
 import { readStore, storePath } from '../records/store.mjs';
-import { breakdown, completeness, filterRows, presentColumns, toCsv, weeklyStats } from '../records/digest.mjs';
+import { completeness, filterRows, presentColumns, sliceBreakdown, toCsv, weeklyStats } from '../records/digest.mjs';
 import { addDays, today } from '../records/normalize.mjs';
 
 const WEB_DIR = dirname(fileURLToPath(import.meta.url));
@@ -136,7 +136,12 @@ async function handleFeed(res, params, dataDir) {
       dated: stats.dated,
       undated: stats.total - stats.dated,
     },
-    breakdown: breakdown(rows),
+    // Per-week rate for every category and borough, so a sellable slice can be
+    // spotted from one screen instead of filtering to each one by hand.
+    slices: {
+      category: sliceBreakdown(rows, 'category').slice(0, 25),
+      borough: sliceBreakdown(rows, 'borough').slice(0, 25),
+    },
     completeness: completeness(rows, ['name', 'category', 'borough', 'street', 'zip', 'status']),
     // Options come from the UNFILTERED store: deriving them from the filtered
     // rows would delete every other borough from the list the moment one is

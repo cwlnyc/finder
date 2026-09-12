@@ -510,3 +510,45 @@ test('probe unions column names across the sample', () => {
     assert.equal(zip.pct, 50);
   });
 });
+
+test('paging accumulates every row exactly once', async () => {
+  // 2500 rows is three pages: two full and a short one. Nothing may be
+  // skipped at a page boundary and nothing may arrive twice -- both are
+  // silent, and both corrupt every count downstream.
+  const all = Array.from({ length: 2500 }, (_, i) => ({
+    license_nbr: `L${i}`,
+    business_name: `Shop ${i}`,
+    license_creation_date: '2026-08-14T00:00:00.000',
+  }));
+  const seen = [];
+  const fetchImpl = async (url) => {
+    const params = new URL(url).searchParams;
+    const offset = Number(params.get('$offset') ?? 0);
+    const limit = Number(params.get('$limit'));
+    seen.push(offset);
+    return { ok: true, status: 200, json: async () => all.slice(offset, offset + limit), text: async () => '' };
+  };
+
+  const rows = await fetchRows(LICENSES, { since: '2026-08-01', fetchImpl });
+  assert.deepEqual(seen, [0, 1000, 2000], 'three sequential pages');
+  assert.equal(rows.length, 2500);
+  assert.equal(new Set(rows.map((r) => r.id)).size, 2500, 'no duplicates');
+  assert.equal(rows[999].id, 'L999');
+  assert.equal(rows[1000].id, 'L1000', 'no gap across the page boundary');
+});
+
+test('max stops paging early without over-fetching', async () => {
+  const all = Array.from({ length: 2500 }, (_, i) => ({
+    license_nbr: `L${i}`, business_name: 'Shop', license_creation_date: '2026-08-14',
+  }));
+  let calls = 0;
+  const fetchImpl = async (url) => {
+    calls++;
+    const p = new URL(url).searchParams;
+    const offset = Number(p.get('$offset') ?? 0);
+    return { ok: true, status: 200, json: async () => all.slice(offset, offset + Number(p.get('$limit'))), text: async () => '' };
+  };
+  const rows = await fetchRows(LICENSES, { since: '2026-08-01', max: 1500, fetchImpl });
+  assert.equal(rows.length, 1500);
+  assert.equal(calls, 2, 'stopped once the cap was reached');
+});

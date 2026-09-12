@@ -10,9 +10,9 @@ const FILTER_IDS = ['days', 'borough', 'category', 'status', 'contains'];
 
 // A slice is worth selling at roughly 15/week; below ~8 it is not a product.
 const VERDICTS = [
-  { min: 15, tone: 'good', text: 'Enough volume to sell' },
-  { min: 8, tone: 'warning', text: 'Thin — widen the category or add a borough' },
-  { min: 0, tone: 'critical', text: 'Too thin to build on' },
+  { min: 15, tone: 'good', text: 'Enough volume to sell', short: 'sellable' },
+  { min: 8, tone: 'warning', text: 'Thin — widen the category or add a borough', short: 'thin' },
+  { min: 0, tone: 'critical', text: 'Too thin to build on', short: 'too thin' },
 ];
 
 let currentQuery = '';
@@ -235,28 +235,65 @@ function hideTip() {
   $('tooltip').hidden = true;
 }
 
-function renderBreakdown(listId, entries) {
-  const list = $(listId);
-  list.replaceChildren();
-  const max = Math.max(...entries.map(([, n]) => n), 1);
+/** One slice table: value, per-week rate, verdict. Rows apply the filter. */
+function renderSlices(bodyId, filterId, entries, fillPct) {
+  const body = $(bodyId);
+  body.replaceChildren();
+  const max = Math.max(...entries.map((e) => e.perWeek), 1);
 
-  for (const [name, count] of entries.slice(0, 10)) {
-    const item = document.createElement('li');
-    const label = document.createElement('span');
-    label.className = 'label';
-    label.textContent = name;
-    label.title = name;
-    const value = document.createElement('span');
-    value.className = 'count';
-    value.textContent = count.toLocaleString();
+  const note = $(`fill-${filterId}`);
+  note.textContent = fillPct != null && fillPct < 100
+    ? `recorded on ${Math.round(fillPct)}% of records`
+    : '';
+
+  for (const entry of entries) {
+    const row = document.createElement('tr');
+    const named = entry.value !== '';
+
+    const label = document.createElement('td');
+    label.className = 'slice-label';
+    label.textContent = named ? entry.value : '(not recorded)';
+    label.title = label.textContent;
+
+    const rate = document.createElement('td');
+    rate.className = 'slice-rate';
+    rate.textContent = entry.perWeek.toLocaleString();
+
+    const bar = document.createElement('td');
+    bar.className = 'slice-bar';
     const track = document.createElement('div');
     track.className = 'track';
     const fill = document.createElement('div');
     fill.className = 'fill';
-    fill.style.width = `${(count / max) * 100}%`;
+    fill.style.width = `${(entry.perWeek / max) * 100}%`;
     track.append(fill);
-    item.append(label, value, track);
-    list.append(item);
+    bar.append(track);
+
+    const state = document.createElement('td');
+    state.className = 'slice-state';
+    if (named) {
+      // Records with no value for this field are not a slice you can sell --
+      // calling the blank row "sellable" invites filtering to nothing.
+      const { tone, short } = VERDICTS.find((v) => entry.perWeek >= v.min);
+      state.className = `slice-state verdict ${tone}`;
+      state.textContent = short;
+    }
+
+    row.append(label, rate, bar, state);
+    if (named) {
+      row.tabIndex = 0;
+      row.className = 'clickable';
+      row.title = `Filter to ${entry.value}`;
+      const apply = () => {
+        $(filterId).value = entry.value;
+        refresh();
+      };
+      row.addEventListener('click', apply);
+      row.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); apply(); }
+      });
+    }
+    body.append(row);
   }
 }
 
@@ -360,8 +397,9 @@ async function refresh({ push = true } = {}) {
   renderTiles(data);
   lastWeeks = data.stats.weeks;
   renderChart(lastWeeks);
-  renderBreakdown('by-borough', data.breakdown.borough);
-  renderBreakdown('by-category', data.breakdown.category);
+  const fill = (field) => data.completeness.find((c) => c.field === field)?.pct;
+  renderSlices('slice-category', 'category', data.slices.category, fill('category'));
+  renderSlices('slice-borough', 'borough', data.slices.borough, fill('borough'));
   renderTable(data.rows, data.total, data.columns);
   $('download').href = `/api/export.csv?${query}`;
 }
