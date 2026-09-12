@@ -7,7 +7,10 @@ import test from 'node:test';
 import { addDays, compareDay, daysBetween, parseDay, today, weekStart } from './normalize.mjs';
 import { assertMapping, buildUrl, fetchRows, MappingError, normalizeRow, probeSource } from './socrata.mjs';
 import { mergeStore, readStore } from './store.mjs';
-import { completeness, csvCell, DISPLAY_COLUMNS, filterRows, presentColumns, toCsv, weeklyStats } from './digest.mjs';
+import {
+  completeness, csvCell, DERIVED_SOURCES, DISPLAY_COLUMNS, filterRows, formatPhone,
+  presentColumns, presentRow, presentRows, titleCase, toCsv, weeklyStats,
+} from './digest.mjs';
 import { getSource, SOURCES } from './sources.mjs';
 
 const LICENSES = getSource('dcwp-licenses');
@@ -342,11 +345,12 @@ test('csvCell quotes commas, quotes and newlines', () => {
   assert.equal(csvCell(undefined), '');
 });
 
-test('toCsv emits a header and one CRLF row per record', () => {
-  const csv = toCsv([{ date: '2026-08-10', name: 'Beta, Inc.' }], ['date', 'name']);
-  assert.equal(csv, 'date,name\r\n2026-08-10,"Beta, Inc."\r\n');
-  const missing = toCsv([{ date: '2026-08-10' }], ['date', 'name']);
-  assert.equal(missing, 'date,name\r\n2026-08-10,\r\n', 'a missing column is blank, not "undefined"');
+test('toCsv heads the file with human labels, not field keys', () => {
+  const cols = [['date', 'Date'], ['name', 'Business']];
+  const csv = toCsv([{ date: '2026-08-10', name: 'Beta, Inc.' }], cols);
+  assert.equal(csv, 'Date,Business\r\n2026-08-10,"Beta, Inc."\r\n');
+  const missing = toCsv([{ date: '2026-08-10' }], cols);
+  assert.equal(missing, 'Date,Business\r\n2026-08-10,\r\n', 'a missing column is blank, not "undefined"');
 });
 
 test('normalizeRow collapses the portal timestamp to a calendar day', () => {
@@ -389,14 +393,22 @@ test('every required field is actually mapped', () => {
   }
 });
 
-test('every mapped field has a display column', () => {
-  // A field mapped but missing from DISPLAY_COLUMNS is fetched, stored, and
-  // then silently dropped from both the table and the CSV.
-  const known = new Set(DISPLAY_COLUMNS.map(([key]) => key));
+test('every mapped field reaches the output somehow', () => {
+  // A field mapped but neither displayed nor folded into a derived column is
+  // fetched, stored, and then silently dropped from the table and the CSV.
+  const shown = new Set(DISPLAY_COLUMNS.map(([key]) => key));
   for (const source of SOURCES) {
     for (const field of Object.keys(source.fields)) {
-      assert.ok(known.has(field), `${source.id} maps '${field}', which nothing will ever display`);
+      const reaches = shown.has(field) || shown.has(DERIVED_SOURCES.get(field));
+      assert.ok(reaches, `${source.id} maps '${field}', which nothing will ever display`);
     }
+  }
+});
+
+test('derived columns name a real destination', () => {
+  const shown = new Set(DISPLAY_COLUMNS.map(([key]) => key));
+  for (const [from, to] of DERIVED_SOURCES) {
+    assert.ok(shown.has(to), `'${from}' claims to feed '${to}', which is not a column`);
   }
 });
 
@@ -551,4 +563,105 @@ test('max stops paging early without over-fetching', async () => {
   const rows = await fetchRows(LICENSES, { since: '2026-08-01', max: 1500, fetchImpl });
   assert.equal(rows.length, 1500);
   assert.equal(calls, 2, 'stopped once the cap was reached');
+});
+
+// --- presentation ------------------------------------------------------
+
+test('SHOUTED names become readable without losing their suffix', () => {
+  assert.equal(titleCase('BREAD WINNERS CONSTRUCTION LLC'), 'Bread Winners Construction LLC');
+  assert.equal(titleCase('D & R MAINTENANCE, INC.'), 'D & R Maintenance, Inc.');
+  assert.equal(titleCase('ZIKOS MILLWORK AND CONTRACTING LLC'), 'Zikos Millwork and Contracting LLC');
+  assert.equal(titleCase('MCDONALD BROS'), 'McDonald Bros');
+  assert.equal(titleCase("O'BRIEN & SONS"), "O'Brien & Sons");
+  assert.equal(titleCase('THE HOME DEPOT'), 'The Home Depot', 'a minor word still leads');
+});
+
+test('deliberate capitalisation is left exactly as typed', () => {
+  // "GreyStone" was written that way on purpose; rewriting it is worse than
+  // doing nothing, so only all-caps values are touched.
+  for (const name of ['GreyStone Contracting NY Corp', 'iRepair NYC', 'eBay Motors']) {
+    assert.equal(titleCase(name), name);
+  }
+  assert.equal(titleCase(''), '');
+  assert.equal(titleCase(null), '');
+});
+
+test('street abbreviations survive title casing', () => {
+  assert.equal(titleCase('E 2ND ST'), 'E 2nd St');
+  assert.equal(titleCase('BRIGHTON 10TH CT'), 'Brighton 10th Ct', 'CT is Court here, not Connecticut');
+  assert.equal(titleCase('199-20 32ND AVENUE'), '199-20 32nd Avenue');
+  assert.equal(titleCase('PARK TER E'), 'Park Ter E');
+  assert.equal(titleCase('MOUNT MORRIS PARK W'), 'Mount Morris Park W');
+});
+
+test('every phone ends up in one format', () => {
+  // The portal mixes all of these in one column, and the buyer would otherwise
+  // clean them by hand -- which is the chore they are paying to avoid.
+  for (const input of ['3474267055', '(347) 426-7055', '347-426-7055', '13474267055', '347.426.7055']) {
+    assert.equal(formatPhone(input), '(347) 426-7055', input);
+  }
+});
+
+test('anything that is not a plain US number is left alone', () => {
+  assert.equal(formatPhone('x1234'), 'x1234');
+  assert.equal(formatPhone('212555616'), '212555616', 'nine digits is not silently padded');
+  assert.equal(formatPhone(''), '');
+  assert.equal(formatPhone(null), '');
+});
+
+test('presentRow joins the address and leaves raw fields intact', () => {
+  const row = presentRow({
+    name: 'S4M CONSTRUCTION CORP', building: '533', street: 'E 2ND ST',
+    borough: 'Brooklyn', phone: '3474588357', zip: '11218',
+  });
+  assert.equal(row.address, '533 E 2nd St');
+  assert.equal(row.name, 'S4M Construction Corp');
+  assert.equal(row.phone, '(347) 458-8357');
+  assert.equal(row.borough, 'Brooklyn', 'filter values are never rewritten');
+  assert.equal(presentRows([{ name: 'A', building: '', street: '' }])[0].address, '');
+});
+
+test('a leading-zero ZIP survives Excel', () => {
+  // 07728 becomes 7728 the moment Excel opens the file without this.
+  assert.equal(csvCell('07728'), "'07728");
+  assert.equal(csvCell('11218'), '11218', 'ordinary ZIPs are untouched');
+  assert.equal(csvCell('0'), '0');
+  assert.equal(csvCell('0016371-DCA'), '0016371-DCA', 'not a bare digit string');
+});
+
+test('a column identical on every row is dropped from the output', () => {
+  // licenseType reads "Premises" on all 500 rows -- padding, not information.
+  const rows = Array.from({ length: 5 }, (_, i) => ({
+    date: '2026-08-14', name: `Shop ${i}`, address: '1 Main St',
+    licenseType: 'Premises', status: i < 2 ? 'Active' : 'Inactive',
+  }));
+  const keys = presentColumns(rows).map(([key]) => key);
+  assert.ok(!keys.includes('licenseType'), 'uniform administrative column dropped');
+  assert.ok(keys.includes('status'), 'the same column kept once it varies');
+});
+
+test('identity and location columns stay even when uniform', () => {
+  // Dropping these would lose the label when a buyer merges two files.
+  const rows = Array.from({ length: 5 }, (_, i) => ({
+    date: '2026-08-14', name: `Shop ${i}`, category: 'Home Improvement Contractor',
+    borough: 'Queens', address: '1 Main St',
+  }));
+  const keys = presentColumns(rows).map(([key]) => key);
+  assert.ok(keys.includes('category'));
+  assert.ok(keys.includes('borough'));
+});
+
+test('short vowel-less tokens read as initials, not words', () => {
+  assert.equal(titleCase('LT HOME CONSULTING LLC'), 'LT Home Consulting LLC');
+  assert.equal(titleCase('TJ CONTRACTING'), 'TJ Contracting');
+  assert.equal(titleCase('JG CONSTRUCTION INC.'), 'JG Construction Inc.');
+});
+
+test('the initials rule does not eat ordinals or street suffixes', () => {
+  // ST, RD and DR have no vowels either, and "2ND" has none at all -- each
+  // would read as initials without an explicit exception.
+  assert.equal(titleCase('533 E 2ND ST'), '533 E 2nd St');
+  assert.equal(titleCase('8503 67TH AVE'), '8503 67th Ave');
+  assert.equal(titleCase('71 POTTER RD'), '71 Potter Rd');
+  assert.equal(titleCase('MT VERNON DR'), 'Mt Vernon Dr');
 });

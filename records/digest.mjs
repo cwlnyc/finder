@@ -154,22 +154,144 @@ export const DISPLAY_COLUMNS = [
   ['name', 'Business'],
   ['category', 'Category'],
   ['permittee', 'Contractor'],
-  ['status', 'Status'],
-  ['building', 'No.'],
-  ['street', 'Street'],
+  ['address', 'Address'],
   ['borough', 'Borough'],
   ['zip', 'ZIP'],
   ['phone', 'Phone'],
+  ['status', 'Status'],
   ['expires', 'Expires'],
   ['licenseType', 'Licensee'],
   ['permitType', 'Permit'],
   ['job', 'Job #'],
-  ['id', 'ID'],
+  ['id', 'License #'],
 ];
 
-/** The columns that actually carry a value in these rows, in display order. */
+// Mapped fields that never appear as a column of their own because they are
+// combined into a derived one. Declared here so the invariant "every mapped
+// field reaches the output somehow" stays checkable.
+export const DERIVED_SOURCES = new Map([
+  ['building', 'address'],
+  ['street', 'address'],
+]);
+
+// Administrative fields worth dropping when every row shares one value: a
+// column reading "Premises" 500 times is padding. Identity and location stay
+// even when constant, so a buyer merging two files never loses the label.
+const DROP_WHEN_UNIFORM = new Set(['licenseType', 'permitType', 'status', 'expires', 'job']);
+
+/** The columns worth showing for these rows, in display order. */
 export function presentColumns(rows) {
-  return DISPLAY_COLUMNS.filter(([key]) => rows.some((r) => r[key] !== '' && r[key] != null));
+  return DISPLAY_COLUMNS.filter(([key]) => {
+    const values = rows.map((r) => r[key]).filter((v) => v !== '' && v != null);
+    if (values.length === 0) return false;
+    if (DROP_WHEN_UNIFORM.has(key) && values.length === rows.length) {
+      return new Set(values).size > 1;
+    }
+    return true;
+  });
+}
+
+// --- presentation ------------------------------------------------------
+//
+// The portal publishes SHOUTING NAMES, three phone formats, and an address
+// split across two columns. Cleaning that up is not decoration -- it is the
+// thing a buyer is actually paying for, since otherwise they do it themselves.
+
+// Kept uppercase because lowercasing them looks like a mistake. Inc, Corp, Ltd
+// and Co are deliberately absent: convention title-cases those.
+const KEEP_UPPER = new Set([
+  'LLC', 'L.L.C.', 'LLP', 'PLLC', 'PC', 'P.C.', 'USA', 'U.S.A.', 'US', 'NY', 'NYC',
+  'NJ', 'HVAC', 'TV', 'AC', 'DBA', 'II', 'III', 'IV', 'V', 'VI',
+]);
+// Deliberately not here: CT, which is Court far more often than Connecticut in
+// a street address, and ST, which is Street rather than Saint.
+
+// Lowercased inside a name, never as its first word.
+const MINOR = new Set(['and', 'or', 'of', 'the', 'for', 'at', 'on', 'in', 'to', 'a', 'an', 'by', 'with']);
+
+// Short vowel-less tokens are nearly always initials ("LT Home Consulting",
+// "TJ Contracting") and read wrong title-cased. Street abbreviations are the
+// exception -- ST, RD and DR have no vowels either, and "533 E 2nd ST" is worse
+// than "533 E 2nd St".
+const STREET_WORDS = new Set([
+  'ST', 'RD', 'DR', 'CT', 'LN', 'PL', 'TER', 'AVE', 'AV', 'BLVD', 'PKWY', 'HWY',
+  'SQ', 'CIR', 'EXPY', 'PLZ', 'MT', 'FT', 'BCH', 'PK', 'BRG', 'TPKE',
+]);
+
+function looksLikeInitials(bare) {
+  const upper = bare.toUpperCase();
+  if (upper.length < 2 || upper.length > 3) return false;
+  if (STREET_WORDS.has(upper)) return false;
+  return !/[AEIOUY]/.test(upper);
+}
+
+function titleCaseWord(word, isFirst) {
+  const bare = word.replace(/[^A-Za-z0-9.'&/-]/g, '');
+  if (bare === '') return word;
+  if (KEEP_UPPER.has(bare.toUpperCase())) return word.toUpperCase();
+  if (!isFirst && MINOR.has(bare.toLowerCase())) return word.toLowerCase();
+  // Digits first: "2ND" has no vowel and would otherwise read as initials.
+  // 2ND, 67TH -> 2nd, 67th
+  if (/^\d+(ST|ND|RD|TH)$/i.test(bare)) return word.toLowerCase();
+  // Street numbers, unit numbers, anything with a digit: leave alone.
+  if (/\d/.test(bare)) return word;
+  if (bare.length === 1) return word.toUpperCase();
+  if (looksLikeInitials(bare)) return word.toUpperCase();
+
+  const lower = word.toLowerCase();
+  const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+  if (/^mc[a-z]{2,}/.test(lower)) return 'Mc' + cap(lower.slice(2));
+  if (/^o'[a-z]{2,}/.test(lower)) return "O'" + cap(lower.slice(2));
+  // Hyphenated and slashed names capitalise on both sides of the separator.
+  return lower.split(/([-/])/).map((part) => (part.length > 1 ? cap(part) : part)).join('');
+}
+
+/**
+ * Title-case a SHOUTED value, and leave anything else exactly as typed.
+ *
+ * The all-caps test matters: "GreyStone Contracting NY Corp" was capitalised
+ * deliberately by whoever registered it, and rewriting it would be worse than
+ * doing nothing.
+ */
+export function titleCase(value) {
+  const s = String(value ?? '').trim();
+  if (s === '' || s !== s.toUpperCase()) return s;
+  let seenWord = false;
+  return s
+    .split(/(\s+)/)
+    .map((token) => {
+      if (/^\s+$/.test(token)) return ' ';
+      const result = titleCaseWord(token, !seenWord);
+      seenWord = true;
+      return result;
+    })
+    .join('');
+}
+
+/** One phone format. Anything that is not a plain US number is left alone. */
+export function formatPhone(value) {
+  const raw = String(value ?? '').trim();
+  if (raw === '') return '';
+  const digits = raw.replace(/\D/g, '');
+  const ten = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+  if (ten.length !== 10) return raw;
+  return `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}`;
+}
+
+/** Clean one record for display and export. Filtering already happened. */
+export function presentRow(row) {
+  const street = titleCase(row.street);
+  return {
+    ...row,
+    name: titleCase(row.name),
+    permittee: titleCase(row.permittee),
+    address: [row.building, street].filter(Boolean).join(' '),
+    phone: formatPhone(row.phone),
+  };
+}
+
+export function presentRows(rows) {
+  return rows.map(presentRow);
 }
 
 // --- CSV ---------------------------------------------------------------
@@ -188,14 +310,19 @@ const NUMERIC = /^-?\d+(\.\d+)?$/;
 export function csvCell(value) {
   let s = value == null ? '' : String(value);
   if (/^[=+\-@\t\r]/.test(s) && !NUMERIC.test(s)) s = `'${s}`;
+  // A ZIP like 07728 becomes 7728 the moment Excel opens the file. The leading
+  // apostrophe forces a text cell and is stripped on display; it fires only on
+  // digit strings that start with a zero, so nothing else is touched.
+  else if (/^0\d+$/.test(s)) s = `'${s}`;
   if (/[",\n\r]/.test(s)) s = `"${s.replaceAll('"', '""')}"`;
   return s;
 }
 
+/** `columns` is the [key, label] list from presentColumns; labels head the file. */
 export function toCsv(rows, columns) {
-  const cols = columns ?? [...new Set(rows.flatMap((r) => Object.keys(r)))];
-  const lines = [cols.map(csvCell).join(',')];
-  for (const row of rows) lines.push(cols.map((c) => csvCell(row[c])).join(','));
+  const cols = columns ?? DISPLAY_COLUMNS.filter(([k]) => rows.some((r) => r[k] != null));
+  const lines = [cols.map(([, label]) => csvCell(label)).join(',')];
+  for (const row of rows) lines.push(cols.map(([key]) => csvCell(row[key])).join(','));
   // CRLF: Excel is the destination for most of these and it is the safe choice.
   return lines.join('\r\n') + '\r\n';
 }

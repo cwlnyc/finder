@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 import { SOURCES, getSource } from '../records/sources.mjs';
 import { readStore, storePath } from '../records/store.mjs';
-import { completeness, filterRows, presentColumns, sliceBreakdown, toCsv, weeklyStats } from '../records/digest.mjs';
+import { completeness, filterRows, presentColumns, presentRows, sliceBreakdown, toCsv, weeklyStats } from '../records/digest.mjs';
 import { addDays, today } from '../records/normalize.mjs';
 
 const WEB_DIR = dirname(fileURLToPath(import.meta.url));
@@ -117,6 +117,9 @@ async function buildFeed(params, dataDir) {
 async function handleFeed(res, params, dataDir) {
   const { source, all, rows, filters } = await buildFeed(params, dataDir);
   const stats = weeklyStats(rows);
+  // Filtering and the statistics run on raw values; only what reaches a human
+  // gets cleaned up.
+  const shown = presentRows(rows.slice(0, MAX_ROWS));
 
   json(res, 200, {
     source: { id: source.id, label: source.label, dataset: source.dataset, confidence: source.confidence },
@@ -124,10 +127,10 @@ async function handleFeed(res, params, dataDir) {
     pullCommand: `node records/cli.mjs pull ${source.id} --days 180`,
     total: rows.length,
     truncated: rows.length > MAX_ROWS,
-    rows: rows.slice(0, MAX_ROWS),
+    rows: shown,
     // The client renders whatever columns the server says are populated, so the
     // table and the CSV can never disagree about a source's shape.
-    columns: presentColumns(rows.slice(0, MAX_ROWS)),
+    columns: presentColumns(shown),
     stats: {
       median: stats.median,
       mean: stats.mean,
@@ -157,7 +160,8 @@ async function handleFeed(res, params, dataDir) {
 
 async function handleExport(res, params, dataDir) {
   const { source, rows } = await buildFeed(params, dataDir);
-  const csv = toCsv(rows, presentColumns(rows).map(([key]) => key));
+  const presented = presentRows(rows);
+  const csv = toCsv(presented, presentColumns(presented));
   const filename = `${source.id}-${today()}.csv`;
 
   res.writeHead(200, {

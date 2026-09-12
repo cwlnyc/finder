@@ -191,6 +191,30 @@ gets exercised without network:
 node records/cli.mjs pull dcwp-licenses --fixture path/to/rows.json
 ```
 
+## The export is cleaned, not raw
+
+The portal publishes SHOUTING NAMES, three phone formats in one column, and an
+address split across two. Cleaning that up is the product — otherwise the buyer
+does it themselves and wonders what they paid for. `digest --csv` and the web
+download both apply:
+
+| Raw | Exported |
+|---|---|
+| `BREAD WINNERS CONSTRUCTION LLC` | `Bread Winners Construction LLC` |
+| `GreyStone Contracting NY Corp` | unchanged — deliberate casing is left alone |
+| `3474588357`, `(347) 426-7055` | `(347) 458-8357`, `(347) 426-7055` |
+| `building` + `street` columns | one `Address` column |
+| `licenseType` = "Premises" ×500 | dropped — a uniform column is padding |
+| header `date,name,zip` | header `Date,Business,ZIP` |
+
+Two details worth knowing:
+
+- A ZIP like `07728` is written `'07728`. Without the apostrophe Excel reads it
+  as the number 7728 and eats the leading zero; Excel and Sheets both strip the
+  apostrophe on display.
+- Only ALL-CAPS values are title-cased. Filter values (borough, category) and
+  the stored data are never rewritten — cleaning happens on the way out.
+
 ## Before you sell this
 
 - **Public records are public.** Business name, address, license type and

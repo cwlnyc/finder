@@ -5,7 +5,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { getSource, SOURCES } from './sources.mjs';
 import { fetchRows, MappingError, normalizeRow, probeSource } from './socrata.mjs';
 import { mergeStore, readStore, storePath } from './store.mjs';
-import { breakdown, completeness, filterRows, presentColumns, toCsv, weeklyStats } from './digest.mjs';
+import { breakdown, completeness, filterRows, presentColumns, presentRows, toCsv, weeklyStats } from './digest.mjs';
 import { addDays, today } from './normalize.mjs';
 
 function parseArgs(argv) {
@@ -247,23 +247,24 @@ async function cmdDigest(flags, positional) {
     contains: flags.contains === true ? undefined : flags.contains,
   }).sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 
-  const columns = presentColumns(rows).map(([key]) => key);
+  const presented = presentRows(rows);
+  const columns = presentColumns(presented);
 
   if (flags.csv) {
     const path = flags.csv === true ? `${source.id}-${today()}.csv` : flags.csv;
-    await writeFile(path, toCsv(rows, columns), 'utf8');
-    console.log(`${rows.length} records -> ${path}`);
+    await writeFile(path, toCsv(presented, columns), 'utf8');
+    console.log(`${presented.length} records -> ${path}`);
     return;
   }
 
-  console.log(`\n${source.label} -- last ${days} days (${rows.length} records)\n`);
-  for (const r of rows) {
-    const where = [[r.building, r.street].filter(Boolean).join(' '), r.borough].filter(Boolean).join(', ');
+  console.log(`\n${source.label} -- last ${days} days (${presented.length} records)\n`);
+  for (const r of presented) {
+    const where = [r.address, r.borough].filter(Boolean).join(', ');
     console.log(`${r.date}  ${r.name || r.permittee || '(no name)'}`);
     if (r.category) console.log(`            ${r.category}${r.status ? ` -- ${r.status}` : ''}`);
-    if (where) console.log(`            ${where}`);
+    if (where) console.log(`            ${where}${r.phone ? `  ${r.phone}` : ''}`);
   }
-  if (rows.length === 0) console.log('(nothing in this window -- try --days 30 or drop a filter)');
+  if (presented.length === 0) console.log('(nothing in this window -- try --days 30 or drop a filter)');
 }
 
 const USAGE = `

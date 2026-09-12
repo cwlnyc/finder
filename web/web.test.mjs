@@ -184,7 +184,7 @@ test('the table and the CSV agree on which columns exist', async () => {
   const data = await feed('days=0');
   const csv = await (await fetch(`${base}/api/export.csv?source=dcwp-licenses&days=0`)).text();
   const header = csv.split('\r\n')[0].split(',');
-  assert.deepEqual(data.columns.map(([key]) => key), header);
+  assert.deepEqual(data.columns.map(([, label]) => label), header);
 });
 
 test('the feed labels its columns for display', async () => {
