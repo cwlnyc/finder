@@ -1,4 +1,5 @@
 node_modules/
 records/data/
+prospects/data/
 *.local
 .DS_Store

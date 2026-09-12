@@ -12,6 +12,7 @@
     "start": "node web/server.mjs",
     "records": "node records/cli.mjs",
     "probe": "node records/cli.mjs probe --all",
-    "test": "node --test records/*.test.mjs web/*.test.mjs"
+    "test": "node --test records/*.test.mjs web/*.test.mjs prospects/*.test.mjs",
+    "prospects": "node prospects/cli.mjs"
   }
 }

@@ -1,0 +1,237 @@
+#!/usr/bin/env node
+// Find the people you are going to sell the contractor list to.
+//
+// Mason (or Google Maps by hand) gives you business names and websites. This
+// turns those websites into contact addresses and keeps track of who you have
+// already written to, so nobody gets the same mail twice.
+
+import { readFile, writeFile } from 'node:fs/promises';
+import { crawlSite, normalizeUrl, siteDomain } from './crawl.mjs';
+import { addSites, readProspects, storePath, updateProspect, writeProspects } from './store.mjs';
+import { csvCell } from '../records/digest.mjs';
+
+function parseArgs(argv) {
+  const flags = {};
+  const positional = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (!arg.startsWith('--')) { positional.push(arg); continue; }
+    const [key, inline] = arg.slice(2).split(/=(.*)/s);
+    const next = argv[i + 1];
+    if (inline !== undefined) flags[key] = inline;
+    else if (next !== undefined && !next.startsWith('--')) flags[key] = argv[++i];
+    else flags[key] = true;
+  }
+  return { flags, positional };
+}
+
+function num(value, fallback) {
+  if (value === undefined || value === true) return fallback;
+  const n = Number(value);
+  if (!Number.isFinite(n)) throw new Error(`Expected a number, got '${value}'`);
+  return n;
+}
+
+// --- input -------------------------------------------------------------
+
+function splitCsvLine(line) {
+  const out = [];
+  let field = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quoted) {
+      if (c === '"') { if (line[i + 1] === '"') { field += '"'; i++; } else quoted = false; }
+      else field += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ',') { out.push(field); field = ''; }
+    else field += c;
+  }
+  out.push(field);
+  return out;
+}
+
+/**
+ * Read sites from a plain list of URLs or from a CSV.
+ *
+ * Accepts whatever Mason or a copy-paste from Maps produces: the CSV branch
+ * looks for a column named like a website and one named like a business, in
+ * any order, rather than demanding a fixed layout.
+ */
+export function parseSiteFile(text) {
+  const lines = text.split('\n').map((l) => l.trim()).filter((l) => l !== '');
+  if (lines.length === 0) return [];
+
+  const header = splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
+  const urlCol = header.findIndex((h) => /^(website|url|site|web|link|domain)$/.test(h));
+  const nameCol = header.findIndex((h) => /^(name|business|company|title)$/.test(h));
+
+  const rows = urlCol === -1
+    ? lines.map((line) => ({ raw: line, name: '' }))
+    : lines.slice(1).map((line) => {
+        const cells = splitCsvLine(line);
+        return { raw: (cells[urlCol] ?? '').trim(), name: nameCol === -1 ? '' : (cells[nameCol] ?? '').trim() };
+      });
+
+  const seen = new Set();
+  const sites = [];
+  for (const { raw, name } of rows) {
+    const url = normalizeUrl(raw);
+    const domain = siteDomain(url);
+    if (!domain || seen.has(domain)) continue;
+    seen.add(domain);
+    sites.push({ url, domain, name });
+  }
+  return sites;
+}
+
+// --- commands ----------------------------------------------------------
+
+async function cmdAdd(flags, positional) {
+  const path = flags.file ?? positional[0];
+  if (!path) throw new Error('Usage: add <file>   (a .txt of URLs, or a CSV with a website column)');
+  const sites = parseSiteFile(await readFile(path, 'utf8'));
+  if (sites.length === 0) {
+    console.log('No usable website addresses in that file.');
+    console.log('Expected one URL per line, or a CSV with a column called website/url/site.');
+    process.exitCode = 1;
+    return;
+  }
+  const result = await addSites(sites);
+  console.log(`${sites.length} sites read   ${result.added} new   ${result.skipped} already known`);
+  console.log(`  -> ${storePath()}`);
+  if (result.added) console.log(`\nNext:  node prospects/cli.mjs find`);
+}
+
+async function cmdFind(flags) {
+  const all = await readProspects();
+  const limit = num(flags.limit, 25);
+  const retry = Boolean(flags.retry);
+  const queue = all
+    .filter((p) => p.status === 'pending' || (retry && p.status === 'unreachable'))
+    .slice(0, limit);
+
+  if (queue.length === 0) {
+    const pending = all.filter((p) => p.status === 'pending').length;
+    console.log(all.length === 0
+      ? 'Nothing to look up yet. Add some sites first:  node prospects/cli.mjs add sites.txt'
+      : `Nothing pending${pending === 0 ? ' — everything has been tried' : ''}. Use --retry for the unreachable ones.`);
+    return;
+  }
+
+  console.log(`Looking up ${queue.length} site${queue.length === 1 ? '' : 's'} (a few seconds each, on purpose)\n`);
+  let found = 0;
+  for (const [i, prospect] of queue.entries()) {
+    process.stdout.write(`  ${String(i + 1).padStart(3)}/${queue.length}  ${prospect.domain.padEnd(34)}`);
+    const result = await crawlSite(prospect.url, { maxPages: num(flags.pages, 5) });
+    prospect.status = result.status;
+    prospect.emails = result.emails.map((e) => e.email);
+    prospect.crawledAt = new Date().toISOString();
+    prospect.notes = result.error || '';
+    if (prospect.emails.length) {
+      found++;
+      console.log(`${prospect.emails[0]}${prospect.emails.length > 1 ? ` (+${prospect.emails.length - 1})` : ''}`);
+    } else {
+      console.log(result.status === 'no-email' ? 'no address on the site' : result.error || result.status);
+    }
+    await writeProspects(all); // save as we go: a long run must survive a Ctrl-C
+  }
+  console.log(`\n${found} of ${queue.length} had a contact address.`);
+  console.log('Review them:  node prospects/cli.mjs list');
+}
+
+const STATUS_LABEL = {
+  ok: 'found', 'no-email': 'no address', unreachable: 'unreachable',
+  'bad-url': 'bad url', pending: 'not tried', skip: 'skipped',
+};
+
+async function cmdList(flags) {
+  const all = await readProspects();
+  if (all.length === 0) { console.log('No prospects yet.'); return; }
+
+  const wanted = flags.status === true ? undefined : flags.status;
+  const rows = all
+    .filter((p) => (wanted ? p.status === wanted : true))
+    .filter((p) => (flags.emailed ? p.emailedAt : flags.new ? !p.emailedAt : true))
+    .filter((p) => (flags.found ? p.emails.length > 0 : true));
+
+  for (const p of rows) {
+    const mark = p.repliedAt ? 'REPLIED' : p.emailedAt ? 'emailed' : '';
+    console.log(`${p.domain.padEnd(34)}${(p.emails[0] ?? STATUS_LABEL[p.status] ?? p.status).padEnd(34)}${mark}`);
+    if (p.name) console.log(`  ${p.name}`);
+  }
+
+  const counts = all.reduce((acc, p) => ({ ...acc, [p.status]: (acc[p.status] ?? 0) + 1 }), {});
+  const emailed = all.filter((p) => p.emailedAt).length;
+  console.log(`\n${rows.length} shown of ${all.length}. ` +
+    Object.entries(counts).map(([k, v]) => `${STATUS_LABEL[k] ?? k}: ${v}`).join('  ') +
+    `  |  emailed: ${emailed}`);
+}
+
+async function cmdMark(flags, positional) {
+  const domain = positional[0];
+  if (!domain) throw new Error('Usage: mark <domain> --emailed | --replied | --skip');
+  const now = new Date().toISOString();
+  const changes = {};
+  if (flags.emailed) changes.emailedAt = now;
+  if (flags.replied) { changes.repliedAt = now; if (!flags.emailed) changes.emailedAt = changes.emailedAt ?? now; }
+  if (flags.skip) changes.status = 'skip';
+  if (flags.note) changes.notes = String(flags.note);
+  if (Object.keys(changes).length === 0) throw new Error('Nothing to change. Pass --emailed, --replied, --skip or --note.');
+
+  const updated = await updateProspect(domain, changes);
+  console.log(`${updated.domain}: ${updated.repliedAt ? 'replied' : updated.emailedAt ? 'emailed' : updated.status}`);
+}
+
+async function cmdExport(flags) {
+  const all = await readProspects();
+  // Only what you can actually write to, and only what you have not written to
+  // yet -- the whole point of the log is not mailing anyone twice.
+  const rows = all.filter((p) => p.emails.length > 0 && (flags.all ? true : !p.emailedAt));
+  if (rows.length === 0) {
+    console.log(flags.all ? 'No addresses found yet.' : 'Nothing new to send. Use --all to include those already emailed.');
+    return;
+  }
+  const cols = ['name', 'domain', 'email', 'other_emails', 'website'];
+  const lines = [cols.join(',')];
+  for (const p of rows) {
+    lines.push([p.name, p.domain, p.emails[0], p.emails.slice(1).join(' '), p.url].map(csvCell).join(','));
+  }
+  const path = flags.csv === true || !flags.csv ? 'prospects.csv' : flags.csv;
+  await writeFile(path, lines.join('\r\n') + '\r\n', 'utf8');
+  console.log(`${rows.length} prospects -> ${path}`);
+}
+
+const USAGE = `
+Find who to sell the list to
+
+  node prospects/cli.mjs add <file>        a .txt of URLs, or a CSV with a website column
+  node prospects/cli.mjs find [--limit 25] look up contact addresses
+  node prospects/cli.mjs list [--found]    what you have
+  node prospects/cli.mjs mark <domain> --emailed
+  node prospects/cli.mjs export --csv out.csv
+
+Typical run:
+  node prospects/cli.mjs add brokers.csv
+  node prospects/cli.mjs find
+  node prospects/cli.mjs export --csv brokers-to-email.csv
+  ...send the mail, then...
+  node prospects/cli.mjs mark acmeinsurance.com --emailed
+
+export skips anyone already marked emailed, so nobody gets it twice.
+`;
+
+const COMMANDS = { add: cmdAdd, find: cmdFind, list: cmdList, mark: cmdMark, export: cmdExport };
+
+async function main() {
+  const { flags, positional } = parseArgs(process.argv.slice(2));
+  const command = COMMANDS[positional[0]];
+  if (!command) {
+    console.log(USAGE);
+    if (positional[0]) { console.error(`Unknown command '${positional[0]}'`); process.exitCode = 1; }
+    return;
+  }
+  await command(flags, positional.slice(1));
+}
+
+main().catch((err) => { console.error(`\n${err.message}`); process.exitCode = 1; });

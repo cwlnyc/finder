@@ -250,6 +250,50 @@ before any export you intend to sell.
 Sources without a single "live" status (DOB permits, whose filing statuses are
 legitimately mixed) omit `activeStatus` and get no warning.
 
+## Finding who to sell it to
+
+`prospects/` is the other half: the contractor list is what you sell, this finds
+the people who buy it (insurance brokers, suppliers, bookkeepers).
+
+Google Maps — or any tool that lists local businesses — gives you names and
+websites but **never email addresses**; no such field exists in the Places API.
+This turns those websites into contact addresses.
+
+```bash
+node prospects/cli.mjs add brokers.csv      # a .txt of URLs, or a CSV with a website column
+node prospects/cli.mjs find                 # visit each site, pull contact addresses
+node prospects/cli.mjs list --found
+node prospects/cli.mjs export --csv send.csv
+# ...send the mail, then...
+node prospects/cli.mjs mark sterlingins.com --emailed
+```
+
+`export` skips anyone already marked emailed, so nobody gets the same message
+twice. That log is the point of the whole thing.
+
+### What it does and does not do
+
+- Reads `mailto:` links first, then page text, and understands
+  `info [at] acme [dot] com`.
+- Throws away what only looks like an address: `logo@2x.png`, Sentry keys,
+  `you@example.com` template placeholders, `noreply@`. A prospect list padded
+  with junk is worse than a short one — you find out after you have sent.
+- Follows at most four contact-ish pages per site, same host only, and never
+  wanders into a linked Facebook or blog.
+- **Respects robots.txt**, waits ~1.2s between requests, and gives up on a slow
+  site rather than hanging.
+
+These limits are deliberate. The targets are small firms on shared hosting, and
+finding twenty contacts is not worth degrading someone's website.
+
+### Before you email anyone
+
+Business contact addresses published on a company's own website, used for B2B
+outreach, are fair game — but CAN-SPAM still applies: use a real name and reply
+address, say who you are, and honour an opt-out immediately and permanently.
+Keep this list separate from the contractor records. One is public record you
+can sell; the other is your own working notes and is not for resale.
+
 ## Before you sell this
 
 - **Public records are public.** Business name, address, license type and
