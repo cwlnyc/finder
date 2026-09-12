@@ -12,6 +12,7 @@ import {
   presentColumns, presentRow, presentRows, titleCase, toCsv, weeklyStats,
 } from './digest.mjs';
 import { getSource, SOURCES } from './sources.mjs';
+import { boroughFromZip, OUTSIDE, withArea } from './nyc.mjs';
 
 const LICENSES = getSource('dcwp-licenses');
 
@@ -664,4 +665,62 @@ test('the initials rule does not eat ordinals or street suffixes', () => {
   assert.equal(titleCase('8503 67TH AVE'), '8503 67th Ave');
   assert.equal(titleCase('71 POTTER RD'), '71 Potter Rd');
   assert.equal(titleCase('MT VERNON DR'), 'Mt Vernon Dr');
+});
+
+// --- borough from ZIP --------------------------------------------------
+
+test('NYC ZIPs resolve to the right borough', () => {
+  assert.equal(boroughFromZip('10034'), 'Manhattan');
+  assert.equal(boroughFromZip('11218'), 'Brooklyn');
+  assert.equal(boroughFromZip('11691'), 'Queens', 'Far Rockaway is Queens');
+  assert.equal(boroughFromZip('10469'), 'Bronx');
+  assert.equal(boroughFromZip('10314'), 'Staten Island');
+  assert.equal(boroughFromZip('11004'), 'Queens', 'Glen Oaks sits in its own small range');
+});
+
+test('a real ZIP outside the five boroughs says so', () => {
+  // Every one of these appeared on a blank-borough row in the live data.
+  for (const zip of ['12207', '07728', '11554', '11783', '10701']) {
+    assert.equal(boroughFromZip(zip), OUTSIDE, zip);
+  }
+});
+
+test('an unusable ZIP stays unknown rather than guessing', () => {
+  // Unknown is not the same as outside, and either guess would be worse
+  // than a blank.
+  for (const zip of ['', '  ', null, undefined, 'abc', '1121', '0']) {
+    assert.equal(boroughFromZip(zip), '', JSON.stringify(zip));
+  }
+});
+
+test('withArea fills a blank borough and never overwrites a recorded one', () => {
+  assert.equal(withArea({ borough: '', zip: '11218' }).borough, 'Brooklyn');
+  assert.equal(withArea({ borough: '', zip: '07728' }).borough, OUTSIDE);
+  assert.equal(withArea({ borough: 'Queens', zip: '11218' }).borough, 'Queens',
+    'the portal wins wherever it actually recorded something');
+  assert.equal(withArea({ borough: '', zip: '' }).borough, '', 'nothing to go on, so nothing invented');
+});
+
+test('a store written before this existed is filled on read', async () => {
+  // The whole reason this runs at read time: no re-pull required.
+  await withTempDir(async (dir) => {
+    await mergeStore('t', [
+      { id: 'L1', date: '2026-08-10', name: 'Alpha', borough: '', zip: '11218' },
+      { id: 'L2', date: '2026-08-11', name: 'Beta', borough: '', zip: '07728' },
+      { id: 'L3', date: '2026-08-12', name: 'Gamma', borough: 'Queens', zip: '11218' },
+    ], { dir });
+    const stored = await readStore('t', dir);
+    assert.deepEqual(stored.map((r) => r.borough), ['Brooklyn', OUTSIDE, 'Queens']);
+  });
+});
+
+test('filling the borough makes those rows filterable', () => {
+  // Before this they were unreachable: no borough meant no dropdown entry and
+  // no way to include or exclude them.
+  const rows = [
+    withArea({ id: '1', date: '2026-08-10', borough: '', zip: '11218' }),
+    withArea({ id: '2', date: '2026-08-10', borough: '', zip: '07728' }),
+  ];
+  assert.deepEqual(filterRows(rows, { borough: 'Brooklyn' }).map((r) => r.id), ['1']);
+  assert.deepEqual(filterRows(rows, { borough: OUTSIDE }).map((r) => r.id), ['2']);
 });

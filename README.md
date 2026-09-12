@@ -215,6 +215,25 @@ Two details worth knowing:
 - Only ALL-CAPS values are title-cased. Filter values (borough, category) and
   the stored data are never rewritten — cleaning happens on the way out.
 
+## Borough is filled in from the ZIP
+
+DCWP leaves `address_borough` blank on roughly a third of records. Every blank
+one turns out to be a business outside the five boroughs — Yonkers, Long
+Island, New Jersey, upstate. A blank cell reads as missing data; what it means
+is "not in NYC".
+
+`records/nyc.mjs` fills a blank borough from the ZIP: the borough for a city
+ZIP, `Outside NYC` for a valid ZIP beyond it, and nothing at all when the ZIP
+is missing or malformed — unknown is not the same as outside. A borough the
+portal actually recorded is never overwritten.
+
+This runs when rows are **read**, not when they are written, so a store pulled
+before this existed gets the benefit without being re-downloaded.
+
+The effect: borough goes from ~63% filled to 100%, those rows become
+filterable, and "Outside NYC" becomes a slice you can sell separately — a New
+Jersey contractor newly licensed to work in NYC is its own buying moment.
+
 ## Before you sell this
 
 - **Public records are public.** Business name, address, license type and

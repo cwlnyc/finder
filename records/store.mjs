@@ -9,6 +9,8 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { withArea } from './nyc.mjs';
+
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), 'data');
 
 export function storePath(sourceId, dir = DATA_DIR) {
@@ -25,7 +27,9 @@ export async function readStore(sourceId, dir = DATA_DIR) {
     const trimmed = line.trim();
     if (trimmed === '') continue;
     try {
-      rows.push(JSON.parse(trimmed));
+      // Derive a blank borough from the ZIP on the way out rather than on the
+      // way in, so a store written before that existed does not need re-pulling.
+      rows.push(withArea(JSON.parse(trimmed)));
     } catch {
       // One torn line (killed mid-write, disk full) should not cost the file.
       process.emitWarning(`Skipping unparseable line ${i + 1} of ${path}`);
