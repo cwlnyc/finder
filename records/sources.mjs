@@ -48,6 +48,9 @@ export const SOURCES = [
     dataset: 'w7w3-xahh',
     dateField: 'license_creation_date',
     required: ['id', 'date', 'name'],
+    // The status meaning "this licence is live". Anything else -- Voided,
+    // Surrendered -- is a dead record that must not go out in a lead list.
+    activeStatus: 'Active',
     fields: {
       id: 'license_nbr',
       date: 'license_creation_date',

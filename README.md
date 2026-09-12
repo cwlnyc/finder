@@ -234,6 +234,22 @@ The effect: borough goes from ~63% filled to 100%, those rows become
 filterable, and "Outside NYC" becomes a slice you can sell separately — a New
 Jersey contractor newly licensed to work in NYC is its own buying moment.
 
+## Dead licences
+
+`dcwp-licenses` declares `activeStatus: 'Active'`. Anything else — `Voided`,
+`Surrendered` — is a licence that is no longer live, and the page says so:
+
+> 3 of 242 records are Surrendered or Voided — those licences are no longer
+> live. Set Status to Active before exporting a lead list.
+
+They are about 1% of rows, easy to miss, and one of them reaching a buyer costs
+more trust than the row was worth. The filter is left alone rather than
+defaulted, so nothing disappears without you asking — but set Status to Active
+before any export you intend to sell.
+
+Sources without a single "live" status (DOB permits, whose filing statuses are
+legitimately mixed) omit `activeStatus` and get no warning.
+
 ## Before you sell this
 
 - **Public records are public.** Business name, address, license type and

@@ -114,6 +114,13 @@ async function buildFeed(params, dataDir) {
   return { source, all, rows, filters };
 }
 
+/** Records whose licence is no longer live, for sources that define one. */
+function deadRecords(source, rows) {
+  if (!source.activeStatus) return null;
+  const dead = rows.filter((r) => r.status && r.status !== source.activeStatus);
+  return { count: dead.length, statuses: [...new Set(dead.map((r) => r.status))].sort() };
+}
+
 async function handleFeed(res, params, dataDir) {
   const { source, all, rows, filters } = await buildFeed(params, dataDir);
   const stats = weeklyStats(rows);
@@ -124,6 +131,8 @@ async function handleFeed(res, params, dataDir) {
   json(res, 200, {
     source: { id: source.id, label: source.label, dataset: source.dataset, confidence: source.confidence },
     empty: all.length === 0,
+    dead: deadRecords(source, rows),
+    activeStatus: source.activeStatus ?? null,
     pullCommand: `node records/cli.mjs pull ${source.id} --days 180`,
     total: rows.length,
     truncated: rows.length > MAX_ROWS,

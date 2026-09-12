@@ -209,3 +209,32 @@ test('the feed reports a wholly blank column so the UI can explain itself', asyn
   assert.equal(street.filled, 60, 'street is populated in the fixture');
   assert.equal(data.options.category.length > 0, true, 'and category still offers options');
 });
+
+test('records whose licence is dead are counted and named', async () => {
+  // A Voided licence is not a new business, and shipping one to a buyer costs
+  // more trust than the row was worth.
+  const data = await feed('days=0');
+  assert.equal(data.activeStatus, 'Active');
+  assert.equal(data.dead.count, 0, 'the fixture is all Active');
+
+  const dir2 = await mkdtemp(join(tmpdir(), 'web-dead-'));
+  await mergeStore('dcwp-licenses', [
+    { id: 'A', date: today(), name: 'Live Co', status: 'Active', zip: '11218' },
+    { id: 'B', date: today(), name: 'Gone Co', status: 'Voided', zip: '11218' },
+    { id: 'C', date: today(), name: 'Quit Co', status: 'Surrendered', zip: '11218' },
+  ], { dir: dir2 });
+  const app = createApp({ dataDir: dir2 });
+  await new Promise((r) => app.listen(0, '127.0.0.1', r));
+  const res = await fetch(`http://127.0.0.1:${app.address().port}/api/feed?source=dcwp-licenses&days=0`);
+  const body = await res.json();
+  assert.equal(body.dead.count, 2);
+  assert.deepEqual(body.dead.statuses, ['Surrendered', 'Voided'], 'named so the notice can list them');
+  await new Promise((r) => app.close(r));
+  await rm(dir2, { recursive: true, force: true });
+});
+
+test('a source with no notion of an active status reports none', async () => {
+  const res = await fetch(`${base}/api/feed?source=dob-permits&days=0`);
+  const body = await res.json();
+  assert.equal(body.dead, null, 'DOB filing statuses are legitimately mixed');
+});

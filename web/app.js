@@ -87,6 +87,17 @@ function renderNotices(data) {
     ));
   }
 
+  // A licence that has been voided or surrendered is not a new business. It is
+  // a small share of rows and easy to miss, and shipping one to a buyer costs
+  // more trust than the row was worth.
+  if (data.dead?.count > 0) {
+    box.append(notice(
+      `${data.dead.count} of ${data.total.toLocaleString()} records are ` +
+      `${data.dead.statuses.join(' or ')} — those licences are no longer live. ` +
+      `Set Status to ${data.activeStatus} before exporting a lead list.`,
+    ));
+  }
+
   // A column blank in every single record is not a quiet gap in the data, it is
   // a broken mapping -- and the visible symptom is a filter with nothing in it,
   // which reads as a bug in the page rather than a problem with the store.
