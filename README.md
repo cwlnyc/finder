@@ -19,10 +19,24 @@ starts refusing batches, re-check:
 node records/cli.mjs probe --all
 ```
 
-It fetches one row per dataset and prints `ok` or `BAD` for every column this
-repo declares, followed by the dataset's real column list. Fixing a wrong name
-is a one-line edit to the `fields` map in `records/sources.mjs` — nothing else
-in the codebase hardcodes a portal column name.
+It samples 200 rows per dataset and reports, for every column this repo maps,
+whether it exists **and how often it actually carries a value**:
+
+```
+  field       column                    state    filled  example
+  name        business_name             ok        100%   ASTORIA DELI
+  category    business_category         EMPTY       0%
+  licenseType license_type              ok        100%   Sidewalk Cafe
+  expires     lic_expir_dd              MISSING      -
+```
+
+`MISSING` is a wrong column name. `EMPTY` is the right name on a column nobody
+fills — a slower failure, because the pull succeeds and the store quietly fills
+with blanks. It then lists populated columns you have not mapped, which is
+usually where the value you wanted actually lives.
+
+Fixing either is a one-line edit to the `fields` map in `records/sources.mjs`
+— nothing else in the codebase hardcodes a portal column name.
 
 `pull` also refuses to write a batch whose required fields come back empty,
 rather than overwriting a good store with thousands of blank rows.

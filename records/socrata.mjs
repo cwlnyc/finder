@@ -52,25 +52,57 @@ async function getJson(url, { fetchImpl = fetch, appToken = process.env.SOCRATA_
   return res.json();
 }
 
-/** Fetch a single row so we can compare declared column names against reality. */
-export async function probeSource(source, opts = {}) {
+/**
+ * Sample real rows and report, per column, whether it exists AND how often it
+ * actually carries a value.
+ *
+ * Existence alone is not enough. A column can be present in the schema and
+ * empty in every row -- the pull then succeeds, the store fills with blanks,
+ * and the only symptom is a filter with nothing in it. That is a slower, more
+ * confusing failure than a name that is simply wrong, so measure the fill rate
+ * rather than trusting the column list.
+ */
+export async function probeSource(source, { sampleSize = 200, ...opts } = {}) {
   // No $order: :id is valid everywhere, but if the caller's mapping is broken
   // we want the request itself to succeed so we can report the real columns.
-  const rows = await getJson(buildUrl(source, { limit: 1, order: false }), opts);
-  const actual = rows.length ? Object.keys(rows[0]) : [];
-  const declared = Object.entries(source.fields);
+  const rows = await getJson(buildUrl(source, { limit: sampleSize, order: false }), opts);
 
+  // Socrata omits null fields from each row entirely, so a column missing from
+  // one row may be populated in the next. Union the keys across the sample.
+  const actual = [...new Set(rows.flatMap((r) => Object.keys(r)))].sort();
+
+  const filled = (column) =>
+    rows.filter((r) => r[column] != null && String(r[column]).trim() !== '').length;
+  const example = (column) => {
+    const hit = rows.find((r) => r[column] != null && String(r[column]).trim() !== '');
+    return hit ? String(hit[column]).trim().slice(0, 38) : '';
+  };
+  const pct = (n) => (rows.length ? Math.round((n / rows.length) * 100) : 0);
+
+  const declared = Object.entries(source.fields);
   const results = declared.map(([canonical, column]) => ({
     canonical,
     column,
     ok: actual.includes(column),
+    pct: pct(filled(column)),
+    example: example(column),
     required: source.required.includes(canonical),
   }));
 
-  const dateOk = actual.includes(source.dateField);
-  const unmapped = actual.filter((c) => !declared.some(([, col]) => col === c));
+  const unmapped = actual
+    .filter((c) => !declared.some(([, col]) => col === c))
+    .map((column) => ({ column, pct: pct(filled(column)), example: example(column) }))
+    .sort((a, b) => b.pct - a.pct);
 
-  return { source, sampled: rows.length, actual, results, dateOk, unmapped, row: rows[0] ?? null };
+  return {
+    source,
+    sampled: rows.length,
+    actual,
+    results,
+    unmapped,
+    dateOk: actual.includes(source.dateField),
+    row: rows[0] ?? null,
+  };
 }
 
 export function normalizeRow(source, raw) {

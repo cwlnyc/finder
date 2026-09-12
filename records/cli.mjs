@@ -71,44 +71,60 @@ function cmdSources() {
 async function cmdProbe(flags, positional) {
   const targets = flags.all ? SOURCES : [getSource(positional[0] ?? 'dcwp-licenses')];
   const opts = await clientOpts(flags);
-  let bad = 0;
+  const sampleSize = num(flags.sample, 200);
+  let problems = 0;
 
   for (const source of targets) {
     console.log(`\n=== ${source.id} (${source.domain}/${source.dataset}) ===`);
     let probe;
     try {
-      probe = await probeSource(source, opts);
+      probe = await probeSource(source, { sampleSize, ...opts });
     } catch (err) {
       console.log(`  FETCH FAILED: ${err.message.split('\n')[0]}`);
-      bad++;
+      problems++;
       continue;
     }
     if (probe.sampled === 0) {
       console.log('  dataset returned no rows -- cannot verify the mapping');
-      bad++;
+      problems++;
       continue;
     }
+    console.log(`  sampled ${probe.sampled} rows\n`);
+    console.log(`  ${'field'.padEnd(12)}${'column'.padEnd(26)}${'state'.padEnd(9)}filled  example`);
 
-    console.log(`  date field  ${source.dateField.padEnd(24)} ${probe.dateOk ? 'ok' : 'BAD'}`);
     for (const r of probe.results) {
-      const mark = r.ok ? 'ok' : r.required ? 'BAD (required)' : 'BAD';
-      if (!r.ok) bad++;
-      console.log(`  ${r.canonical.padEnd(10)}  ${r.column.padEnd(24)} ${mark}`);
+      let state;
+      if (!r.ok) {
+        state = r.required ? 'MISSING!' : 'MISSING';
+        problems++;
+      } else if (r.pct === 0) {
+        // The failure this command exists to catch: present but never populated.
+        state = r.required ? 'EMPTY!' : 'EMPTY';
+        problems++;
+      } else {
+        state = 'ok';
+      }
+      const filled = r.ok ? `${r.pct}%`.padStart(5) : '    -';
+      console.log(`  ${r.canonical.padEnd(12)}${r.column.padEnd(26)}${state.padEnd(9)}${filled}   ${r.example}`);
     }
-    if (!probe.dateOk) bad++;
 
-    console.log(`\n  actual columns (${probe.actual.length}):`);
-    console.log('   ', probe.actual.join(', '));
-    if (probe.unmapped.length) {
-      console.log(`\n  unmapped columns you could add: ${probe.unmapped.join(', ')}`);
+    const useful = probe.unmapped.filter((c) => c.pct >= 50);
+    if (useful.length) {
+      console.log('\n  populated columns you have not mapped:');
+      for (const c of useful.slice(0, 12)) {
+        console.log(`    ${c.column.padEnd(28)}${String(c.pct).padStart(3)}%   ${c.example}`);
+      }
     }
   }
 
-  if (bad) {
-    console.log(`\n${bad} mismatch(es). Correct the column names in records/sources.mjs.`);
+  if (problems) {
+    console.log(
+      `\n${problems} problem(s). MISSING = no such column. EMPTY = column exists but is ` +
+        `blank in every sampled row.\nFix the column names in records/sources.mjs, then re-pull.`,
+    );
     process.exitCode = 1;
   } else {
-    console.log('\nAll declared fields exist. Safe to pull.');
+    console.log('\nEvery mapped field exists and carries data. Safe to pull.');
   }
 }
 

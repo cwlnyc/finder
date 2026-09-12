@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { addDays, compareDay, daysBetween, parseDay, today, weekStart } from './normalize.mjs';
-import { assertMapping, buildUrl, fetchRows, MappingError, normalizeRow } from './socrata.mjs';
+import { assertMapping, buildUrl, fetchRows, MappingError, normalizeRow, probeSource } from './socrata.mjs';
 import { mergeStore, readStore } from './store.mjs';
 import { completeness, csvCell, DISPLAY_COLUMNS, filterRows, presentColumns, toCsv, weeklyStats } from './digest.mjs';
 import { getSource, SOURCES } from './sources.mjs';
@@ -451,4 +451,62 @@ test('completeness flags a column that is blank in every record', () => {
   assert.deepEqual(result.find((c) => c.field === 'category'), { field: 'category', filled: 0, pct: 0 });
   assert.equal(result.find((c) => c.field === 'name').pct, 100);
   assert.equal(result.find((c) => c.field === 'borough').filled, 1, 'partly blank is not the same as wholly blank');
+});
+
+// --- probe -------------------------------------------------------------
+
+const fakeFetch = (rows) => async () => ({
+  ok: true, status: 200, json: async () => rows, text: async () => '',
+});
+
+test('probe separates a missing column from an empty one', () => {
+  // These need different fixes -- a wrong name vs. the right name on a column
+  // nobody fills -- and reporting both as "BAD" sent me chasing the wrong one.
+  const rows = Array.from({ length: 10 }, (_, i) => ({
+    license_nbr: `L${i}`,
+    business_name: `Shop ${i}`,
+    license_creation_date: '2026-09-07T00:00:00.000',
+    business_category: '   ',        // present, always blank
+    license_type: 'Sidewalk Cafe',   // the column actually carrying the industry
+  }));
+  return probeSource(LICENSES, { fetchImpl: fakeFetch(rows) }).then((probe) => {
+    const category = probe.results.find((r) => r.canonical === 'category');
+    assert.equal(category.ok, true, 'the column exists');
+    assert.equal(category.pct, 0, 'but nothing is in it');
+
+    const expires = probe.results.find((r) => r.canonical === 'expires');
+    assert.equal(expires.ok, false, 'absent from every row means missing');
+
+    const id = probe.results.find((r) => r.canonical === 'id');
+    assert.equal(id.pct, 100);
+    assert.equal(id.example, 'L0');
+  });
+});
+
+test('probe surfaces populated columns that are not mapped', () => {
+  const rows = Array.from({ length: 10 }, () => ({
+    license_nbr: 'L1', business_name: 'Shop', license_creation_date: '2026-09-07',
+    license_type: 'Sidewalk Cafe', some_empty_col: '',
+  }));
+  return probeSource(LICENSES, { fetchImpl: fakeFetch(rows) }).then((probe) => {
+    const names = probe.unmapped.map((c) => c.column);
+    assert.ok(!names.includes('license_nbr'), 'mapped columns are not listed as unmapped');
+    assert.ok(names.includes('some_empty_col'));
+    // Sorted by fill rate so the useful candidate leads.
+    assert.equal(probe.unmapped[0].pct, 0, 'nothing here is populated except mapped fields');
+  });
+});
+
+test('probe unions column names across the sample', () => {
+  // Socrata omits null fields per row, so a column present only in later rows
+  // would read as missing if we looked at the first row alone.
+  const rows = [
+    { license_nbr: 'L1', business_name: 'A', license_creation_date: '2026-09-07' },
+    { license_nbr: 'L2', business_name: 'B', license_creation_date: '2026-09-07', address_zip: '11106' },
+  ];
+  return probeSource(LICENSES, { fetchImpl: fakeFetch(rows) }).then((probe) => {
+    const zip = probe.results.find((r) => r.canonical === 'zip');
+    assert.equal(zip.ok, true, 'found even though the first row lacked it');
+    assert.equal(zip.pct, 50);
+  });
 });
