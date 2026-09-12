@@ -17,6 +17,7 @@ const VERDICTS = [
 
 let currentQuery = '';
 let lastWeeks = [];
+let allSources = [];
 
 // --- state <-> URL -----------------------------------------------------
 
@@ -295,6 +296,7 @@ async function loadSources() {
   if (!res.ok) throw new Error('Could not reach the server');
   const { sources } = await res.json();
 
+  allSources = sources;
   const select = $('source');
   select.replaceChildren();
   for (const source of sources) {
@@ -332,8 +334,21 @@ async function refresh({ push = true } = {}) {
 
   $('empty').hidden = !data.empty;
   $('content').hidden = data.empty;
+  // Filters against an empty store are all "Any" with nothing behind them,
+  // which reads as a broken page rather than an empty one.
+  $('filters').hidden = data.empty;
   if (data.empty) {
     $('empty-cmd').textContent = data.pullCommand;
+    const elsewhere = allSources.filter((s) => s.id !== data.source.id && s.count > 0);
+    const hint = $('empty-other');
+    hint.replaceChildren();
+    if (elsewhere.length) {
+      hint.append(
+        `Other sources do have data — switch with the Source menu above: ` +
+        elsewhere.map((s) => `${s.label} (${s.count.toLocaleString()})`).join(', '),
+      );
+    }
+    hint.hidden = elsewhere.length === 0;
     return;
   }
 
@@ -371,8 +386,14 @@ async function main() {
   const saved = localStorage.getItem('theme');
   if (saved) document.documentElement.dataset.theme = saved;
 
-  await loadSources();
+  const sources = await loadSources();
   applyUrlToControls();
+  // Without this the page opens on the first source in the list, which is
+  // usually the one you have not pulled -- every filter empty and no clue why.
+  if (!new URLSearchParams(location.search).get('source')) {
+    const withData = sources.find((s) => s.count > 0);
+    if (withData) $('source').value = withData.id;
+  }
 
   $('source').addEventListener('change', () => refresh());
   for (const id of ['days', 'borough', 'category', 'status']) {
