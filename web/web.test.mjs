@@ -196,3 +196,16 @@ test('the feed labels its columns for display', async () => {
   }
   assert.deepEqual(data.columns[0], ['date', 'Date']);
 });
+
+test('the feed reports a wholly blank column so the UI can explain itself', async () => {
+  // A filter dropdown with nothing in it reads as a broken page. The client
+  // turns filled === 0 into "re-pull, your mapping is stale", so this number
+  // has to be exact rather than approximately right.
+  const data = await feed('days=0');
+  const phone = data.completeness.find((c) => c.field === 'phone');
+  assert.equal(phone, undefined, 'phone is not in the completeness set');
+
+  const street = data.completeness.find((c) => c.field === 'street');
+  assert.equal(street.filled, 60, 'street is populated in the fixture');
+  assert.equal(data.options.category.length > 0, true, 'and category still offers options');
+});

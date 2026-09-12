@@ -7,7 +7,7 @@ import test from 'node:test';
 import { addDays, compareDay, daysBetween, parseDay, today, weekStart } from './normalize.mjs';
 import { assertMapping, buildUrl, fetchRows, MappingError, normalizeRow } from './socrata.mjs';
 import { mergeStore, readStore } from './store.mjs';
-import { csvCell, DISPLAY_COLUMNS, filterRows, presentColumns, toCsv, weeklyStats } from './digest.mjs';
+import { completeness, csvCell, DISPLAY_COLUMNS, filterRows, presentColumns, toCsv, weeklyStats } from './digest.mjs';
 import { getSource, SOURCES } from './sources.mjs';
 
 const LICENSES = getSource('dcwp-licenses');
@@ -438,4 +438,17 @@ test('a source without an expiry column is unaffected', () => {
   const row = normalizeRow(permits, { permit_si_no: 'P1', issuance_date: '2026-09-07T00:00:00.000' });
   assert.equal(row.date, '2026-09-07');
   assert.ok(!('expires' in row), 'no phantom column appears for sources that lack one');
+});
+
+test('completeness flags a column that is blank in every record', () => {
+  // This is what tells the UI a field mapping is stale rather than the data
+  // merely being patchy: 0 filled, not "a few missing".
+  const rows = [
+    { name: 'Alpha', category: '', borough: 'Queens' },
+    { name: 'Beta', category: '', borough: '' },
+  ];
+  const result = completeness(rows, ['name', 'category', 'borough']);
+  assert.deepEqual(result.find((c) => c.field === 'category'), { field: 'category', filled: 0, pct: 0 });
+  assert.equal(result.find((c) => c.field === 'name').pct, 100);
+  assert.equal(result.find((c) => c.field === 'borough').filled, 1, 'partly blank is not the same as wholly blank');
 });

@@ -78,8 +78,11 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 
 main { max-width: 1180px; margin: 0 auto; padding: 18px 20px 56px; }
 
+#notices { max-width: 1180px; margin: 0 auto; }
+#notices:not(:empty) { padding-top: 4px; }
+
 .banner {
-  max-width: 1180px; margin: 14px auto 0; padding: 10px 14px;
+  max-width: 1180px; margin: 10px auto 0; padding: 10px 14px;
   border: 1px solid var(--border); border-left: 3px solid var(--warning);
   border-radius: var(--radius); background: var(--surface);
   color: var(--ink-2); font-size: 12.5px;

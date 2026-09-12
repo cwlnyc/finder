@@ -39,6 +39,20 @@ Then open **http://localhost:4000**.
 
 No dependencies. Node 20+.
 
+## If a filter dropdown is empty
+
+A filter offering only "Any" means that column is blank in every stored record.
+The page now says so and names the fix, but the cause is almost always this:
+
+**Upgrading the code does not repair rows already on disk.** If you pulled data
+with an older, wrong field mapping, those rows keep their blank columns forever.
+Delete the store and pull again:
+
+```bash
+rm -rf records/data
+node records/cli.mjs pull dcwp-licenses --days 365
+```
+
 ## The web UI
 
 `npm run web` serves a local page for slicing the data and exporting leads:

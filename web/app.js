@@ -44,7 +44,9 @@ function fillSelect(select, values, placeholder) {
   select.replaceChildren();
   const any = document.createElement('option');
   any.value = '';
-  any.textContent = placeholder;
+  // A dropdown offering only "Any" looks broken. Say why it is empty: the
+  // column carries no values, which usually means a stale field mapping.
+  any.textContent = values.length === 0 && !previous ? 'none in this data' : placeholder;
   select.append(any);
   for (const value of values) {
     const option = document.createElement('option');
@@ -61,9 +63,43 @@ function fillSelect(select, values, placeholder) {
     select.append(orphan);
   }
   select.value = previous;
+  select.disabled = values.length === 0 && !previous;
 }
 
 // --- rendering ---------------------------------------------------------
+
+function notice(text, tone = '') {
+  const el = document.createElement('p');
+  el.className = `banner ${tone}`.trim();
+  el.textContent = text;
+  return el;
+}
+
+function renderNotices(data) {
+  const box = $('notices');
+  box.replaceChildren();
+
+  if (data.source.confidence !== 'verified') {
+    box.append(notice(
+      `Column names for ${data.source.dataset} are unverified (${data.source.confidence}). ` +
+      `Run "node records/cli.mjs probe ${data.source.id}" and correct records/sources.mjs if anything reads BAD.`,
+    ));
+  }
+
+  // A column blank in every single record is not a quiet gap in the data, it is
+  // a broken mapping -- and the visible symptom is a filter with nothing in it,
+  // which reads as a bug in the page rather than a problem with the store.
+  const blank = (data.completeness ?? []).filter((c) => c.filled === 0);
+  if (data.total > 0 && blank.length) {
+    const names = blank.map((c) => c.field).join(', ');
+    box.append(notice(
+      `${names} ${blank.length === 1 ? 'is' : 'are'} blank in all ${data.total.toLocaleString()} records, ` +
+      `so those filters have nothing to offer. This usually means the store was built with an older field ` +
+      `mapping. Re-pull it:  rm -rf records/data  then  node records/cli.mjs pull ${data.source.id} --days 365`,
+      'error',
+    ));
+  }
+}
 
 function renderVerdict(stats) {
   const hasWeeks = stats.weeks.length > 0;
@@ -292,15 +328,7 @@ async function refresh({ push = true } = {}) {
   if (query !== currentQuery) return;
   $('error').hidden = true;
 
-  const banner = $('confidence');
-  if (data.source.confidence !== 'verified') {
-    banner.textContent =
-      `Column names for ${data.source.dataset} are unverified (${data.source.confidence}). ` +
-      `Run "node records/cli.mjs probe ${data.source.id}" and correct records/sources.mjs if anything reads BAD.`;
-    banner.hidden = false;
-  } else {
-    banner.hidden = true;
-  }
+  renderNotices(data);
 
   $('empty').hidden = !data.empty;
   $('content').hidden = data.empty;
