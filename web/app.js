@@ -438,6 +438,8 @@ const PROSPECT_STATE = {
 let buyers = [];
 let chosenBuyer = null;
 let searchReady = false;
+let lookupRunning = false;
+let lookupStop = false;
 
 const NO_KEY =
   'Searching needs a Google Places key. In your terminal: export GOOGLE_PLACES_API_KEY=your_key, ' +
@@ -479,7 +481,8 @@ function renderProspects(data) {
   $('pc-pending').textContent = counts.pending ? `${counts.pending} not looked up yet` : '';
   $('pc-emailed').textContent = counts.emailed.toLocaleString();
   $('pc-replied').textContent = counts.replied ? `${counts.replied} replied` : '';
-  $('prospect-find').disabled = counts.pending === 0;
+  // While a run is in flight the button is the stop control, so leave it live.
+  $('prospect-find').disabled = counts.pending === 0 && !lookupRunning;
 
   // An empty CSV that downloads anyway is the most confusing possible answer,
   // so the link says what it holds and refuses when that is nothing.
@@ -645,18 +648,41 @@ function wireProspects() {
 
   $('prospect-find').addEventListener('click', async () => {
     const button = $('prospect-find');
-    button.disabled = true;
-    // Each site is fetched slowly on purpose, so say so rather than looking hung.
-    $('prospect-status').textContent = 'Visiting sites… a few seconds each';
+
+    // A second click stops the run. 33 sites is seven batches; making someone
+    // click seven times is not a feature.
+    if (lookupRunning) {
+      lookupStop = true;
+      $('prospect-status').textContent = 'Finishing this batch, then stopping…';
+      return;
+    }
+
+    lookupRunning = true;
+    lookupStop = false;
+    button.textContent = 'Stop';
+    let done = 0;
+
     try {
-      const data = await api('/api/prospects/find', {});
-      $('prospect-status').textContent =
-        `Looked up ${data.crawled}. ${data.counts.pending} left.`;
-      renderProspects(data);
+      // Each site is fetched slowly on purpose, so report progress per batch
+      // rather than going quiet for several minutes.
+      for (;;) {
+        const data = await api('/api/prospects/find', {});
+        done += data.crawled;
+        renderProspects(data);
+        const left = data.counts.pending;
+        $('prospect-status').textContent = left
+          ? `Looked up ${done}, ${left} to go — a few seconds each`
+          : `Looked up ${done}. ${data.counts.withEmail} have an address.`;
+        if (data.crawled === 0 || left === 0 || lookupStop) break;
+      }
+      if (lookupStop) $('prospect-status').textContent = `Stopped after ${done}. Click again to carry on.`;
     } catch (err) {
       showError(err.message);
     } finally {
-      button.disabled = false;
+      lookupRunning = false;
+      lookupStop = false;
+      button.textContent = 'Look up addresses';
+      refreshProspects();
     }
   });
 }
