@@ -228,9 +228,22 @@ async function handleExport(res, params, dataDir) {
 
 // --- prospects ---------------------------------------------------------
 
+/**
+ * One shape for every prospect response.
+ *
+ * The mark/add/search handlers used to return a bare summary, so the page read
+ * `searchReady` as undefined after any of them and disabled the search button
+ * until a reload. Everything that renders the tab now comes from here.
+ */
 function prospectSummary(rows) {
+  const ready = exportable(rows);
   return {
     prospects: rows,
+    buyers: BUYER_PRESETS,
+    // The key itself never leaves the server; the page only needs to know
+    // whether searching is possible so it can say what to do when it is not.
+    searchReady: Boolean(process.env.GOOGLE_PLACES_API_KEY),
+    sendList: ready.map((p) => p.primary),
     counts: {
       total: rows.length,
       pending: rows.filter((p) => p.status === 'pending').length,
@@ -239,7 +252,7 @@ function prospectSummary(rows) {
       replied: rows.filter((p) => p.repliedAt).length,
       // What the export would actually contain: has an address, not yet written
       // to. Without this the page cannot say why a download would be empty.
-      ready: exportable(rows).length,
+      ready: ready.length,
       // Why the rest have no address. Without this a row of zeros looks like
       // one failure when it is actually three different ones.
       noEmail: rows.filter((p) => p.status === 'no-email').length,
@@ -249,13 +262,7 @@ function prospectSummary(rows) {
 }
 
 async function handleProspects(res, dataDir) {
-  json(res, 200, {
-    ...prospectSummary(await readProspects(dataDir)),
-    buyers: BUYER_PRESETS,
-    // The key itself never leaves the server; the page only needs to know
-    // whether searching is possible so it can say what to do when it is not.
-    searchReady: Boolean(process.env.GOOGLE_PLACES_API_KEY),
-  });
+  json(res, 200, prospectSummary(await readProspects(dataDir)));
 }
 
 async function handleProspectSearch(res, body, dataDir) {
@@ -340,12 +347,17 @@ async function handleProspectFind(res, dataDir) {
   json(res, 200, { crawled: queue.length, ...prospectSummary(await readProspects(dataDir)) });
 }
 
-async function handleProspectExport(res, dataDir) {
+async function handleProspectExport(res, dataDir, params) {
   const rows = exportable(await readProspects(dataDir));
-  const cols = ['name', 'domain', 'email', 'other_emails', 'website'];
+  // Addresses are the whole point of the file; the rest is only useful for a
+  // mail merge, so it is opt-in rather than clutter you delete every time.
+  const full = params?.get('full') === '1';
+  const cols = full ? ['name', 'domain', 'email', 'other_emails', 'website'] : ['email'];
   const lines = [cols.join(',')];
   for (const p of rows) {
-    lines.push([p.name, p.domain, p.primary, p.others.join(' '), p.url].map(csvCell).join(','));
+    lines.push(full
+      ? [p.name, p.domain, p.primary, p.others.join(' '), p.url].map(csvCell).join(',')
+      : csvCell(p.primary));
   }
   const csv = lines.join('\r\n') + '\r\n';
   res.writeHead(200, {
@@ -393,7 +405,9 @@ export function createApp({ dataDir } = {}) {
       if (url.pathname === '/api/feed') return await handleFeed(res, url.searchParams, dataDir);
       if (url.pathname === '/api/export.csv') return await handleExport(res, url.searchParams, dataDir);
       if (url.pathname === '/api/prospects') return await handleProspects(res, dataDir);
-      if (url.pathname === '/api/prospects/export.csv') return await handleProspectExport(res, dataDir);
+      if (url.pathname === '/api/prospects/export.csv') {
+        return await handleProspectExport(res, dataDir, url.searchParams);
+      }
       json(res, 404, { error: `No route for ${url.pathname}` });
     } catch (err) {
       // An unknown ?source= is the caller's mistake, not a server fault.

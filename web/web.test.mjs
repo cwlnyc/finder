@@ -325,7 +325,7 @@ test('the prospect export leaves out anyone already written to', async () => {
   const res = await fetch(`${base}/api/prospects/export.csv`);
   assert.match(res.headers.get('content-type'), /text\/csv/);
   assert.match(res.headers.get('content-disposition'), /attachment; filename="prospects-\d{4}-\d{2}-\d{2}\.csv"/);
-  assert.equal((await res.text()).trim(), 'name,domain,email,other_emails,website', 'header only');
+  assert.equal((await res.text()).trim(), 'email', 'header only');
 });
 
 test('an unknown POST route is a 404, not a silent success', async () => {
@@ -354,4 +354,45 @@ test('the feed reports how many contacts an export would actually contain', asyn
   assert.equal(counts.ready, 1, 'only the one with an address that has not been written to');
   await new Promise((r) => app.close(r));
   await rm(dir3, { recursive: true, force: true });
+});
+
+test('the export is addresses only unless details are asked for', async () => {
+  // The address is the whole point of the file; the rest only matters for a
+  // mail merge, so it is opt-in rather than columns you delete every time.
+  const dir4 = await mkdtemp(join(tmpdir(), 'web-fmt-'));
+  const { addSites, updateProspect } = await import('../prospects/store.mjs');
+  await addSites([{ domain: 'acme.com', url: 'https://acme.com/', name: 'Acme, Inc.' }], { dir: dir4 });
+  await updateProspect('acme.com', { emails: ['info@acme.com', 'sales@acme.com'], status: 'ok' }, { dir: dir4 });
+
+  const app = createApp({ dataDir: dir4 });
+  await new Promise((r) => app.listen(0, '127.0.0.1', r));
+  const at = `http://127.0.0.1:${app.address().port}`;
+
+  const plain = (await (await fetch(`${at}/api/prospects/export.csv`)).text()).trim().split('\r\n');
+  assert.deepEqual(plain, ['email', 'info@acme.com']);
+
+  const full = (await (await fetch(`${at}/api/prospects/export.csv?full=1`)).text()).trim().split('\r\n');
+  assert.equal(full[0], 'name,domain,email,other_emails,website');
+  assert.match(full[1], /"Acme, Inc\."/, 'a comma in the name is still quoted');
+
+  const feed = await (await fetch(`${at}/api/prospects`)).json();
+  assert.deepEqual(feed.sendList, ['info@acme.com'], 'the page can put these straight on the clipboard');
+  await new Promise((r) => app.close(r));
+  await rm(dir4, { recursive: true, force: true });
+});
+
+test('every prospect response carries the same shape', async () => {
+  // mark/add/search used to return a bare summary, so the page read
+  // searchReady as undefined and disabled the search button until a reload.
+  const shapes = [
+    await (await fetch(`${base}/api/prospects`)).json(),
+    await (await post('/api/prospects/mark', { domain: 'beta-test.com', action: 'unmark' })).json(),
+    await (await post('/api/prospects/add', { text: 'shape-check.com' })).json(),
+  ];
+  for (const shape of shapes) {
+    assert.ok(Array.isArray(shape.buyers) && shape.buyers.length > 0);
+    assert.equal(typeof shape.searchReady, 'boolean');
+    assert.ok(Array.isArray(shape.sendList));
+    assert.equal(typeof shape.counts.ready, 'number');
+  }
 });

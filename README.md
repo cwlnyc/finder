@@ -301,6 +301,16 @@ POST to localhost. That closes it.
 `export` skips anyone already marked emailed, so nobody gets the same message
 twice. That log is the point of the whole thing.
 
+The download is **addresses only** — one `email` column — because that is what
+you paste into a mail client. Tick *with details* (or add `?full=1`) for the
+name, domain and website a mail merge would want. **Copy emails** puts the same
+list on the clipboard, comma-separated.
+
+The list sorts by clicking a column and filters by state (to send / emailed /
+replied / no address) or free text. Left alone it orders itself by what to do
+next: ready to send, then not looked up, then no address, then everyone already
+handled.
+
 ### What it does and does not do
 
 - Reads `mailto:` links first, then page text, and understands

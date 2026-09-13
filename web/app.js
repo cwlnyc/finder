@@ -440,6 +440,11 @@ let chosenBuyer = null;
 let searchReady = false;
 let lookupRunning = false;
 let lookupStop = false;
+let lastData = null;
+let sortKey = '';          // '' keeps the worth-doing-first order
+let sortDir = 1;
+let filterState = 'all';
+let filterText = '';
 
 const NO_KEY =
   'Searching needs a Google Places key. In your terminal: export GOOGLE_PLACES_API_KEY=your_key, ' +
@@ -474,6 +479,7 @@ function renderBuyers(list, ready) {
 }
 
 function renderProspects(data) {
+  lastData = data;
   const { prospects, counts } = data;
   renderBuyers(data.buyers, data.searchReady);
   $('pc-total').textContent = counts.total.toLocaleString();
@@ -493,8 +499,9 @@ function renderProspects(data) {
   // so the link says what it holds and refuses when that is nothing.
   const download = $('prospect-export');
   download.textContent = counts.ready ? `Download CSV (${counts.ready})` : 'Download CSV';
+  $('prospect-copy').disabled = counts.ready === 0;
   if (counts.ready > 0) {
-    download.href = '/api/prospects/export.csv';
+    download.href = `/api/prospects/export.csv${$('prospect-full').checked ? '?full=1' : ''}`;
     download.removeAttribute('aria-disabled');
     download.title = `${counts.ready} contact${counts.ready === 1 ? '' : 's'} you have not emailed yet`;
   } else {
@@ -510,10 +517,13 @@ function renderProspects(data) {
   const body = $('prospect-rows');
   body.replaceChildren();
 
-  // Worth doing first at the top: no address yet, then found-but-unsent, then
-  // the ones already handled.
-  const rank = (p) => (p.repliedAt ? 3 : p.emailedAt ? 2 : p.emails.length ? 0 : 1);
-  for (const p of [...prospects].sort((a, b) => rank(a) - rank(b) || a.domain.localeCompare(b.domain))) {
+  const visible = arrangeProspects(prospects);
+  $('prospect-shown').textContent =
+    visible.length === prospects.length
+      ? `${prospects.length} businesses`
+      : `${visible.length} of ${prospects.length}`;
+
+  for (const p of visible) {
     const tr = document.createElement('tr');
 
     const who = document.createElement('td');
@@ -583,6 +593,56 @@ function renderProspects(data) {
   }
 }
 
+// Default order is "what to do next": ready to send, then not looked up, then
+// no address, then the ones already handled. A chosen column overrides it.
+function defaultRank(p) {
+  if (p.repliedAt) return 4;
+  if (p.emailedAt) return 3;
+  if (p.emails.length) return 0;
+  return p.status === 'pending' ? 1 : 2;
+}
+
+const SORT_VALUE = {
+  name: (p) => (p.name || p.domain).toLowerCase(),
+  email: (p) => (p.emails[0] ?? '').toLowerCase(),
+  state: (p) => (p.repliedAt ? 'replied' : p.emailedAt ? 'emailed' : p.status),
+};
+
+const MATCHES_STATE = {
+  all: () => true,
+  ready: (p) => p.emails.length > 0 && !p.emailedAt,
+  emailed: (p) => Boolean(p.emailedAt) && !p.repliedAt,
+  replied: (p) => Boolean(p.repliedAt),
+  none: (p) => p.emails.length === 0,
+};
+
+function arrangeProspects(prospects) {
+  const needle = filterText.trim().toLowerCase();
+  const rows = prospects.filter((p) => {
+    if (!MATCHES_STATE[filterState](p)) return false;
+    if (!needle) return true;
+    return [p.name, p.domain, ...p.emails].join(' ').toLowerCase().includes(needle);
+  });
+
+  return rows.sort((a, b) => {
+    if (sortKey) {
+      const read = SORT_VALUE[sortKey];
+      // Rows with nothing in the sorted column sink, whichever way it points,
+      // so reversing never fills the top with blanks.
+      const av = read(a);
+      const bv = read(b);
+      if (av === '' || bv === '') return av === bv ? 0 : av === '' ? 1 : -1;
+      const cmp = av.localeCompare(bv);
+      if (cmp !== 0) return cmp * sortDir;
+    }
+    return defaultRank(a) - defaultRank(b) || a.domain.localeCompare(b.domain);
+  });
+}
+
+function rerender() {
+  if (lastData) renderProspects(lastData);
+}
+
 function showError(message) {
   const box = $('error');
   box.textContent = message;
@@ -604,6 +664,48 @@ async function refreshProspects() {
 }
 
 function wireProspects() {
+  for (const button of document.querySelectorAll('button.sorter')) {
+    button.addEventListener('click', () => {
+      // Same column again reverses; a new column starts ascending.
+      if (sortKey === button.dataset.sort) sortDir = -sortDir;
+      else { sortKey = button.dataset.sort; sortDir = 1; }
+      for (const other of document.querySelectorAll('button.sorter')) other.removeAttribute('data-dir');
+      button.dataset.dir = String(sortDir);
+      rerender();
+    });
+  }
+
+  for (const chip of document.querySelectorAll('#prospect-filters .chip')) {
+    chip.addEventListener('click', () => {
+      filterState = chip.dataset.filter;
+      for (const other of document.querySelectorAll('#prospect-filters .chip')) {
+        other.classList.toggle('on', other === chip);
+      }
+      rerender();
+    });
+  }
+
+  $('prospect-search').addEventListener('input', debounce(() => {
+    filterText = $('prospect-search').value;
+    rerender();
+  }, 150));
+
+  $('prospect-full').addEventListener('change', rerender);
+
+  $('prospect-copy').addEventListener('click', async () => {
+    const list = lastData?.sendList ?? [];
+    if (list.length === 0) return;
+    const button = $('prospect-copy');
+    try {
+      // Comma-separated: what a mail client's To/Bcc field expects.
+      await navigator.clipboard.writeText(list.join(', '));
+      button.textContent = `Copied ${list.length}`;
+    } catch {
+      button.textContent = 'Copy blocked — use the CSV';
+    }
+    setTimeout(() => { button.textContent = 'Copy emails'; }, 2000);
+  });
+
   $('prospect-add').addEventListener('click', async () => {
     const text = $('prospect-input').value;
     if (text.trim() === '') return;

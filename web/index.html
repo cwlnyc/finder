@@ -185,7 +185,9 @@
       <div class="add-actions">
         <button type="button" id="prospect-add" class="ghost">Add pasted sites</button>
         <button type="button" id="prospect-find" class="ghost">Look up addresses</button>
+        <button type="button" id="prospect-copy" class="ghost">Copy emails</button>
         <a id="prospect-export" class="ghost" href="/api/prospects/export.csv" download>Download CSV</a>
+        <label class="inline-check"><input type="checkbox" id="prospect-full"> with details</label>
         <span class="muted" id="prospect-status"></span>
       </div>
     </div>
@@ -198,9 +200,25 @@
   </section>
 
   <section class="panel">
+    <div class="list-bar">
+      <div class="chips" id="prospect-filters">
+        <button type="button" class="chip on" data-filter="all">All</button>
+        <button type="button" class="chip" data-filter="ready">To send</button>
+        <button type="button" class="chip" data-filter="emailed">Emailed</button>
+        <button type="button" class="chip" data-filter="replied">Replied</button>
+        <button type="button" class="chip" data-filter="none">No address</button>
+      </div>
+      <input id="prospect-search" type="search" placeholder="Filter by name or address…">
+      <span class="muted" id="prospect-shown"></span>
+    </div>
     <div class="table-wrap">
       <table id="prospect-table">
-        <thead><tr><th>Business</th><th>Contact</th><th>State</th><th></th></tr></thead>
+        <thead><tr>
+          <th><button type="button" class="sorter" data-sort="name">Business</button></th>
+          <th><button type="button" class="sorter" data-sort="email">Contact</button></th>
+          <th><button type="button" class="sorter" data-sort="state">State</button></th>
+          <th></th>
+        </tr></thead>
         <tbody id="prospect-rows"></tbody>
       </table>
     </div>
