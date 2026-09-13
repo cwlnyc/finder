@@ -237,6 +237,9 @@ function prospectSummary(rows) {
       withEmail: rows.filter((p) => p.emails.length > 0).length,
       emailed: rows.filter((p) => p.emailedAt).length,
       replied: rows.filter((p) => p.repliedAt).length,
+      // What the export would actually contain: has an address, not yet written
+      // to. Without this the page cannot say why a download would be empty.
+      ready: rows.filter((p) => p.emails.length > 0 && !p.emailedAt).length,
     },
   };
 }

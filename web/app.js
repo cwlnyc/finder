@@ -480,6 +480,23 @@ function renderProspects(data) {
   $('pc-emailed').textContent = counts.emailed.toLocaleString();
   $('pc-replied').textContent = counts.replied ? `${counts.replied} replied` : '';
   $('prospect-find').disabled = counts.pending === 0;
+
+  // An empty CSV that downloads anyway is the most confusing possible answer,
+  // so the link says what it holds and refuses when that is nothing.
+  const download = $('prospect-export');
+  download.textContent = counts.ready ? `Download CSV (${counts.ready})` : 'Download CSV';
+  if (counts.ready > 0) {
+    download.href = '/api/prospects/export.csv';
+    download.removeAttribute('aria-disabled');
+    download.title = `${counts.ready} contact${counts.ready === 1 ? '' : 's'} you have not emailed yet`;
+  } else {
+    download.removeAttribute('href');
+    download.setAttribute('aria-disabled', 'true');
+    download.title =
+      counts.total === 0 ? 'No businesses yet — search for some first'
+      : counts.withEmail === 0 ? 'No addresses found yet — click "Look up addresses"'
+      : 'Everyone with an address has already been emailed';
+  }
   $('prospect-empty').hidden = prospects.length > 0;
 
   const body = $('prospect-rows');

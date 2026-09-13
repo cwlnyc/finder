@@ -160,6 +160,7 @@ button, .button {
 }
 .button { background: var(--series); border-color: var(--series); color: #fff; font-weight: 500; }
 .ghost:hover { background: var(--plane); }
+a[aria-disabled="true"] { opacity: .45; cursor: not-allowed; text-decoration: none; }
 
 /* --- tiles -------------------------------------------------------- */
 

@@ -331,3 +331,27 @@ test('the prospect export leaves out anyone already written to', async () => {
 test('an unknown POST route is a 404, not a silent success', async () => {
   assert.equal((await post('/api/prospects/nope', {})).status, 404);
 });
+
+test('the feed reports how many contacts an export would actually contain', async () => {
+  // A CSV with only a header is the most confusing possible answer, so the page
+  // needs this number to refuse the download and say why.
+  const dir3 = await mkdtemp(join(tmpdir(), 'web-ready-'));
+  await mergeStore('dcwp-licenses', [{ id: 'x', date: today(), name: 'n', zip: '11218' }], { dir: dir3 });
+  const { addSites, updateProspect } = await import('../prospects/store.mjs');
+  await addSites([
+    { domain: 'found.com', url: 'https://found.com/', name: 'Found' },
+    { domain: 'nomail.com', url: 'https://nomail.com/', name: 'No Mail' },
+    { domain: 'sent.com', url: 'https://sent.com/', name: 'Sent' },
+  ], { dir: dir3 });
+  await updateProspect('found.com', { emails: ['a@found.com'], status: 'ok' }, { dir: dir3 });
+  await updateProspect('sent.com', { emails: ['b@sent.com'], status: 'ok', emailedAt: '2026-09-13T00:00:00Z' }, { dir: dir3 });
+
+  const app = createApp({ dataDir: dir3 });
+  await new Promise((r) => app.listen(0, '127.0.0.1', r));
+  const { counts } = await (await fetch(`http://127.0.0.1:${app.address().port}/api/prospects`)).json();
+  assert.equal(counts.total, 3);
+  assert.equal(counts.withEmail, 2);
+  assert.equal(counts.ready, 1, 'only the one with an address that has not been written to');
+  await new Promise((r) => app.close(r));
+  await rm(dir3, { recursive: true, force: true });
+});
