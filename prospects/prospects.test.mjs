@@ -456,7 +456,7 @@ test('anyone already emailed, or with no address, is left out', () => {
 
 // --- composing the message ---------------------------------------------
 
-import { composeUrl, greetingFor, SUBJECT } from './compose.mjs';
+import { buildBody, composeUrl, formatRecords, greetingFor, SUBJECT } from './compose.mjs';
 
 test('an address that belongs to a person gets their name', () => {
   assert.equal(greetingFor('kate@bestmarkinsurance.com'), 'Hi Kate,');
@@ -482,7 +482,7 @@ test('the compose link opens Gmail, not a desktop mail app', () => {
   assert.equal(url.searchParams.get('view'), 'cm');
   assert.equal(url.searchParams.get('to'), 'kate@acme.com');
   assert.equal(url.searchParams.get('su'), SUBJECT);
-  assert.match(url.searchParams.get('body'), /^Hi Kate,\n\nI pull NYC's contractor/);
+  assert.match(url.searchParams.get('body'), /^Hi Kate,\n\nI keep an eye on/);
   // /u/0/ would be the wrong inbox for anyone whose Gmail is not the first
   // signed-in account.
   assert.ok(!url.pathname.includes('/u/'), 'no account number pinned');
@@ -491,4 +491,51 @@ test('the compose link opens Gmail, not a desktop mail app', () => {
 test('composing needs an address', () => {
   assert.equal(composeUrl(''), '');
   assert.equal(composeUrl(null), '');
+});
+
+const SAMPLE_ROWS = [
+  { name: 'Bread Winners Construction LLC', address: '2114 Birdsall Ave', borough: 'Queens', phone: '(347) 299-5161', date: '2026-08-18' },
+  { name: 'S4M Construction Corp', address: '533 E 2nd St', borough: 'Brooklyn', phone: '(347) 458-8357', date: '2026-08-14' },
+];
+
+test('the businesses go in the body, because a compose URL cannot carry a file', () => {
+  // Gmail has no attachment parameter -- any link could otherwise attach
+  // arbitrary files -- and inline is the better mail anyway: nothing to
+  // download from a stranger.
+  const body = buildBody('kate@acme.com', SAMPLE_ROWS);
+  assert.match(body, /Bread Winners Construction LLC {2}· {2}2114 Birdsall Ave, Queens {2}· {2}\(347\) 299-5161/);
+  assert.match(body, /2 newly licensed contractors/);
+});
+
+test('the date range in the mail is the range of what is in it', () => {
+  assert.match(buildBody('a@b.com', SAMPLE_ROWS), /from Aug 14–Aug 18/);
+  assert.match(buildBody('a@b.com', [SAMPLE_ROWS[0]]), /from Aug 18 —/, 'one day reads as one day');
+});
+
+test('with no records the mail still works, and asks instead of showing', () => {
+  // An empty store must not produce a mail promising a list that is not there.
+  const body = buildBody('kate@acme.com', []);
+  assert.match(body, /^Hi Kate,/);
+  assert.match(body, /Want me to send you this week's\?$/);
+  assert.ok(!body.includes('Here\'s the most recent batch'), 'nothing is claimed that is not attached');
+});
+
+test('the message says what it is before explaining itself', () => {
+  // A pitch that opens by describing itself gets deleted; the goods come first
+  // and there is no ask at the end.
+  const body = buildBody('kate@acme.com', SAMPLE_ROWS);
+  const listAt = body.indexOf('Bread Winners');
+  assert.ok(listAt > 0 && listAt < body.indexOf('public DCWP data'), 'records before the explanation');
+  assert.ok(!/\bbuy\b|\bprice\b|\$\d/.test(body), 'nothing is being sold yet');
+});
+
+test('a record missing a field does not leave a dangling separator', () => {
+  const line = formatRecords([{ name: 'No Phone Co', address: '1 Main St', borough: 'Queens', phone: '' }]);
+  assert.equal(line, 'No Phone Co  ·  1 Main St, Queens');
+});
+
+test('the compose URL carries the records', () => {
+  const body = new URL(composeUrl('kate@acme.com', SAMPLE_ROWS)).searchParams.get('body');
+  assert.match(body, /Bread Winners/);
+  assert.ok(composeUrl('kate@acme.com', SAMPLE_ROWS).length < 8000, 'stays inside a usable URL length');
 });

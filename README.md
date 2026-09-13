@@ -306,9 +306,19 @@ you paste into a mail client. Tick *with details* (or add `?full=1`) for the
 name, domain and website a mail merge would want. **Copy emails** puts the same
 list on the clipboard, comma-separated.
 
-Clicking an address opens **Gmail** with the message already written — a
-`mailto:` link would hand the click to whatever desktop mail app the OS
-registered, which is not where this mail is being sent from. The greeting uses
+Clicking an address opens **Gmail** with the message already written, the most
+recent contractors listed in the body — a `mailto:` link would hand the click
+to whatever desktop mail app the OS registered, which is not where this mail is
+being sent from.
+
+The businesses go **in the body, not as an attachment**. A Gmail compose URL
+cannot carry a file at all (any link could otherwise attach arbitrary files),
+and inline is the better mail regardless: nothing to download from a stranger,
+no attachment penalty with spam filters, and the reader sees whether it is
+useful without opening anything. `SAMPLE` in `prospects/compose.mjs` picks which
+slice goes in, and it takes the most recent records rather than a window
+measured from today — the city publishes about three weeks behind, so "the last
+seven days" would usually be empty. The greeting uses
 a first name when the address plainly belongs to one (`kate@…` → "Hi Kate,")
 and stays generic otherwise; greeting a firm as "Hi Hdainsurancebk," is worse
 than being plain, so the rule is deliberately shy. Edit

@@ -18,7 +18,7 @@ import { crawlSite } from '../prospects/crawl.mjs';
 import { parseSiteFile } from '../prospects/input.mjs';
 import { addSites, exportable, readProspects, updateProspect, writeProspects } from '../prospects/store.mjs';
 import { BUYER_PRESETS, PlacesError, searchPlaces } from '../prospects/places.mjs';
-import { composeUrl } from '../prospects/compose.mjs';
+import { composeUrl, SAMPLE } from '../prospects/compose.mjs';
 import { normalizeUrl, siteDomain } from '../prospects/crawl.mjs';
 
 const WEB_DIR = dirname(fileURLToPath(import.meta.url));
@@ -236,12 +236,36 @@ async function handleExport(res, params, dataDir) {
  * `searchReady` as undefined after any of them and disabled the search button
  * until a reload. Everything that renders the tab now comes from here.
  */
-function prospectSummary(rows) {
+/**
+ * The records that go in the mail: the most recent of the slice being sold.
+ *
+ * Most recent rather than "the last seven days", because the city publishes
+ * about three weeks behind -- a window measured from today would usually be
+ * empty and the mail would go out with nothing in it.
+ */
+async function loadSampleRecords(dataDir) {
+  let rows;
+  try {
+    rows = dataDir ? await readStore(SAMPLE.source, dataDir) : await readStore(SAMPLE.source);
+  } catch {
+    return [];
+  }
+  const wanted = filterRows(rows, { category: SAMPLE.category, status: SAMPLE.status });
+  return presentRows(
+    wanted
+      .filter((r) => r.borough !== SAMPLE.excludeBorough)
+      .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+      .slice(0, SAMPLE.max),
+  );
+}
+
+function prospectSummary(rows, sample = []) {
   const ready = exportable(rows);
   return {
     // compose is attached here rather than built in the page, so the greeting
-    // rules are covered by the test suite like everything else.
-    prospects: rows.map((p) => ({ ...p, compose: p.emails[0] ? composeUrl(p.emails[0]) : '' })),
+    // and the message are covered by the test suite like everything else.
+    prospects: rows.map((p) => ({ ...p, compose: p.emails[0] ? composeUrl(p.emails[0], sample) : '' })),
+    sampleCount: sample.length,
     buyers: BUYER_PRESETS,
     // The key itself never leaves the server; the page only needs to know
     // whether searching is possible so it can say what to do when it is not.
@@ -264,8 +288,14 @@ function prospectSummary(rows) {
   };
 }
 
+/** Everything the prospects tab renders from, in one shape. */
+async function prospectPayload(dataDir) {
+  const [rows, sample] = await Promise.all([readProspects(dataDir), loadSampleRecords(dataDir)]);
+  return prospectSummary(rows, sample);
+}
+
 async function handleProspects(res, dataDir) {
-  json(res, 200, prospectSummary(await readProspects(dataDir)));
+  json(res, 200, await prospectPayload(dataDir));
 }
 
 async function handleProspectSearch(res, body, dataDir) {
@@ -300,7 +330,7 @@ async function handleProspectSearch(res, body, dataDir) {
     withoutWebsite: result.withoutWebsite,
     added: added.added,
     skipped: added.skipped,
-    ...prospectSummary(await readProspects(dataDir)),
+    ...(await prospectPayload(dataDir)),
   });
 }
 
@@ -311,7 +341,7 @@ async function handleProspectAdd(res, body, dataDir) {
     return;
   }
   const result = await addSites(sites, { dir: dataDir });
-  json(res, 200, { ...result, ...prospectSummary(await readProspects(dataDir)) });
+  json(res, 200, { ...result, ...(await prospectPayload(dataDir)) });
 }
 
 async function handleProspectMark(res, body, dataDir) {
@@ -333,7 +363,7 @@ async function handleProspectMark(res, body, dataDir) {
     json(res, 404, { error: err.message });
     return;
   }
-  json(res, 200, prospectSummary(await readProspects(dataDir)));
+  json(res, 200, await prospectPayload(dataDir));
 }
 
 async function handleProspectFind(res, dataDir) {
@@ -347,7 +377,7 @@ async function handleProspectFind(res, dataDir) {
     prospect.notes = result.error || '';
   }
   await writeProspects(all, dataDir);
-  json(res, 200, { crawled: queue.length, ...prospectSummary(await readProspects(dataDir)) });
+  json(res, 200, { crawled: queue.length, ...(await prospectPayload(dataDir)) });
 }
 
 async function handleProspectExport(res, dataDir, params) {
