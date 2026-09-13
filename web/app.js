@@ -584,8 +584,14 @@ function renderProspects(data) {
 }
 
 function showError(message) {
-  $('error').textContent = message;
-  $('error').hidden = false;
+  const box = $('error');
+  box.textContent = message;
+  box.hidden = false;
+  // A failure reported below a 64-row table is indistinguishable from nothing
+  // happening at all, which is exactly how this was missed.
+  box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  const status = $('prospect-status');
+  if (status) status.textContent = 'That did not work — see the message above.';
 }
 
 async function refreshProspects() {
