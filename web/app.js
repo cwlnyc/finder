@@ -541,7 +541,12 @@ function renderProspects(data) {
     const contact = document.createElement('td');
     if (p.emails.length) {
       const mail = document.createElement('a');
-      mail.href = `mailto:${p.emails[0]}`;
+      // Gmail, not mailto: -- a mailto hands the click to whatever desktop app
+      // the OS registered, which is not where this mail is being sent from.
+      mail.href = p.compose || `mailto:${p.emails[0]}`;
+      mail.target = '_blank';
+      mail.rel = 'noopener noreferrer';
+      mail.title = 'Open in Gmail with the message written';
       mail.textContent = p.emails[0];
       contact.append(mail);
       if (p.emails.length > 1) {

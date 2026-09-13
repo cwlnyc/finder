@@ -453,3 +453,42 @@ test('anyone already emailed, or with no address, is left out', () => {
   ]);
   assert.deepEqual(rows.map((r) => r.domain), ['new.com']);
 });
+
+// --- composing the message ---------------------------------------------
+
+import { composeUrl, greetingFor, SUBJECT } from './compose.mjs';
+
+test('an address that belongs to a person gets their name', () => {
+  assert.equal(greetingFor('kate@bestmarkinsurance.com'), 'Hi Kate,');
+  assert.equal(greetingFor('patrick@championinsurance.org'), 'Hi Patrick,');
+  assert.equal(greetingFor('john.smith@acme.com'), 'Hi John,', 'first.last uses the first');
+});
+
+test('anything that might not be a person stays generic', () => {
+  // Greeting a firm as "Hi Hdainsurancebk," is worse than being generic, so
+  // the rule is deliberately shy.
+  for (const email of [
+    'info@acig.insure', 'office@oaktree.com', 'claims@x.com', 'auto@ayroyal.com',
+    'hdainsurancebk@gmail.com', 'dbjbins@gmail.com', 'friends.insurance@gmail.com',
+    'mridgers@mkrspecialty.com', 'acquisitions@bbins.com', 'x@acme.com', '', null,
+  ]) {
+    assert.equal(greetingFor(email), 'Hi there,', String(email));
+  }
+});
+
+test('the compose link opens Gmail, not a desktop mail app', () => {
+  const url = new URL(composeUrl('kate@acme.com'));
+  assert.equal(url.origin + url.pathname, 'https://mail.google.com/mail/');
+  assert.equal(url.searchParams.get('view'), 'cm');
+  assert.equal(url.searchParams.get('to'), 'kate@acme.com');
+  assert.equal(url.searchParams.get('su'), SUBJECT);
+  assert.match(url.searchParams.get('body'), /^Hi Kate,\n\nI pull NYC's contractor/);
+  // /u/0/ would be the wrong inbox for anyone whose Gmail is not the first
+  // signed-in account.
+  assert.ok(!url.pathname.includes('/u/'), 'no account number pinned');
+});
+
+test('composing needs an address', () => {
+  assert.equal(composeUrl(''), '');
+  assert.equal(composeUrl(null), '');
+});

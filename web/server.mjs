@@ -18,6 +18,7 @@ import { crawlSite } from '../prospects/crawl.mjs';
 import { parseSiteFile } from '../prospects/input.mjs';
 import { addSites, exportable, readProspects, updateProspect, writeProspects } from '../prospects/store.mjs';
 import { BUYER_PRESETS, PlacesError, searchPlaces } from '../prospects/places.mjs';
+import { composeUrl } from '../prospects/compose.mjs';
 import { normalizeUrl, siteDomain } from '../prospects/crawl.mjs';
 
 const WEB_DIR = dirname(fileURLToPath(import.meta.url));
@@ -238,7 +239,9 @@ async function handleExport(res, params, dataDir) {
 function prospectSummary(rows) {
   const ready = exportable(rows);
   return {
-    prospects: rows,
+    // compose is attached here rather than built in the page, so the greeting
+    // rules are covered by the test suite like everything else.
+    prospects: rows.map((p) => ({ ...p, compose: p.emails[0] ? composeUrl(p.emails[0]) : '' })),
     buyers: BUYER_PRESETS,
     // The key itself never leaves the server; the page only needs to know
     // whether searching is possible so it can say what to do when it is not.

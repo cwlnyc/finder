@@ -306,6 +306,14 @@ you paste into a mail client. Tick *with details* (or add `?full=1`) for the
 name, domain and website a mail merge would want. **Copy emails** puts the same
 list on the clipboard, comma-separated.
 
+Clicking an address opens **Gmail** with the message already written — a
+`mailto:` link would hand the click to whatever desktop mail app the OS
+registered, which is not where this mail is being sent from. The greeting uses
+a first name when the address plainly belongs to one (`kate@…` → "Hi Kate,")
+and stays generic otherwise; greeting a firm as "Hi Hdainsurancebk," is worse
+than being plain, so the rule is deliberately shy. Edit
+`prospects/compose.mjs` to change the wording.
+
 The list sorts by clicking a column and filters by state (to send / emailed /
 replied / no address) or free text. Left alone it orders itself by what to do
 next: ready to send, then not looked up, then no address, then everyone already
