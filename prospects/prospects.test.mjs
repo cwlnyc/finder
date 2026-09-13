@@ -8,7 +8,7 @@ import test, { after, before } from 'node:test';
 import { extractEmails, findContactLinks, isPlausible } from './extract.mjs';
 import { crawlSite, isAllowed, normalizeUrl, parseRobots, siteDomain } from './crawl.mjs';
 import { addSites, readProspects, updateProspect } from './store.mjs';
-import { parseSiteFile } from './cli.mjs';
+import { parseSiteFile } from './input.mjs';
 
 // --- extraction --------------------------------------------------------
 

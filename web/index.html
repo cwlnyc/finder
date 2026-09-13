@@ -13,8 +13,12 @@
     <h1>Records feed</h1>
     <p class="sub">Newly licensed and permitted businesses, New York City</p>
   </div>
+  <nav class="tabs" role="tablist">
+    <button type="button" class="tab" data-view="records" aria-selected="true">Records</button>
+    <button type="button" class="tab" data-view="prospects" aria-selected="false">Prospects</button>
+  </nav>
   <div class="topbar-right">
-    <label class="field">
+    <label class="field" id="source-field">
       <span>Source</span>
       <select id="source"></select>
     </label>
@@ -22,9 +26,9 @@
   </div>
 </header>
 
-<div id="notices"></div>
-
 <main>
+ <div id="view-records">
+  <div id="notices"></div>
   <!-- Filters in one row above the charts. -->
   <form class="filters" id="filters" autocomplete="off">
     <label class="field">
@@ -142,6 +146,50 @@
       <p id="no-rows" class="muted pad" hidden>Nothing matches these filters.</p>
     </section>
   </div>
+
+ </div><!-- /view-records -->
+
+ <div id="view-prospects" hidden>
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Who to sell it to</h2>
+      <p class="muted">
+        Paste the websites of insurance brokers, suppliers, anyone who wants new
+        contractors. This visits each one and finds their contact address.
+        Marking someone emailed keeps them out of the next export.
+      </p>
+    </div>
+    <div class="add-box">
+      <textarea id="prospect-input" rows="4" spellcheck="false"
+        placeholder="One website per line — sterlingins.com&#10;or paste a CSV with a website column"></textarea>
+      <div class="add-actions">
+        <button type="button" id="prospect-add" class="button">Add sites</button>
+        <button type="button" id="prospect-find" class="ghost">Look up addresses</button>
+        <a id="prospect-export" class="ghost" href="/api/prospects/export.csv" download>Download CSV</a>
+        <span class="muted" id="prospect-status"></span>
+      </div>
+    </div>
+  </section>
+
+  <section class="verdict-row" id="prospect-tiles">
+    <div class="tile"><span class="tile-label">Businesses</span><strong class="tile-number" id="pc-total">0</strong></div>
+    <div class="tile"><span class="tile-label">With an address</span><strong class="tile-number" id="pc-email">0</strong><span class="tile-note" id="pc-pending"></span></div>
+    <div class="tile"><span class="tile-label">Emailed</span><strong class="tile-number" id="pc-emailed">0</strong><span class="tile-note" id="pc-replied"></span></div>
+  </section>
+
+  <section class="panel">
+    <div class="table-wrap">
+      <table id="prospect-table">
+        <thead><tr><th>Business</th><th>Contact</th><th>State</th><th></th></tr></thead>
+        <tbody id="prospect-rows"></tbody>
+      </table>
+    </div>
+    <p id="prospect-empty" class="muted pad" hidden>
+      Nothing here yet. Paste some websites above — Google Maps for
+      "commercial insurance broker Brooklyn" is a good place to start.
+    </p>
+  </section>
+ </div><!-- /view-prospects -->
 
   <p id="error" class="banner error" hidden></p>
 </main>

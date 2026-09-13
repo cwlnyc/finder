@@ -259,6 +259,10 @@ Google Maps — or any tool that lists local businesses — gives you names and
 websites but **never email addresses**; no such field exists in the Places API.
 This turns those websites into contact addresses.
 
+The **Prospects tab** at http://localhost:4000#prospects does all of it: paste
+websites, click *Look up addresses*, mark people emailed as you go, download the
+CSV. Everything below is the same thing from the terminal.
+
 ```bash
 node prospects/cli.mjs add brokers.csv      # a .txt of URLs, or a CSV with a website column
 node prospects/cli.mjs find                 # visit each site, pull contact addresses
@@ -267,6 +271,15 @@ node prospects/cli.mjs export --csv send.csv
 # ...send the mail, then...
 node prospects/cli.mjs mark sterlingins.com --emailed
 ```
+
+The page looks up five sites per click rather than all of them: each is fetched
+slowly on purpose, and a bigger batch would sit past the browser's patience with
+nothing to show. Click again for the next five, or use the CLI for a long run.
+
+Writes (add, mark, look up) are accepted only from the page itself — a
+same-origin check plus a JSON content type. The server is loopback-only and has
+no login, which still leaves one hole: any website you happen to be visiting can
+POST to localhost. That closes it.
 
 `export` skips anyone already marked emailed, so nobody gets the same message
 twice. That log is the point of the whole thing.

@@ -362,7 +362,7 @@ async function refresh({ push = true } = {}) {
   const params = readControls();
   const query = params.toString();
   currentQuery = query;
-  if (push) history.replaceState(null, '', `?${query}`);
+  if (push) history.replaceState(null, '', `?${query}${location.hash}`);
 
   let data;
   try {
@@ -415,6 +415,179 @@ async function refresh({ push = true } = {}) {
   $('download').href = `/api/export.csv?${query}`;
 }
 
+// --- prospects ---------------------------------------------------------
+
+async function api(path, body) {
+  const res = await fetch(path, body
+    ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
+    : undefined);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? `Server returned ${res.status}`);
+  return data;
+}
+
+const PROSPECT_STATE = {
+  pending: 'not looked up',
+  ok: '',
+  'no-email': 'no address on site',
+  unreachable: 'site unreachable',
+  'bad-url': 'bad address',
+  skip: 'skipped',
+};
+
+function renderProspects(data) {
+  const { prospects, counts } = data;
+  $('pc-total').textContent = counts.total.toLocaleString();
+  $('pc-email').textContent = counts.withEmail.toLocaleString();
+  $('pc-pending').textContent = counts.pending ? `${counts.pending} not looked up yet` : '';
+  $('pc-emailed').textContent = counts.emailed.toLocaleString();
+  $('pc-replied').textContent = counts.replied ? `${counts.replied} replied` : '';
+  $('prospect-find').disabled = counts.pending === 0;
+  $('prospect-empty').hidden = prospects.length > 0;
+
+  const body = $('prospect-rows');
+  body.replaceChildren();
+
+  // Worth doing first at the top: no address yet, then found-but-unsent, then
+  // the ones already handled.
+  const rank = (p) => (p.repliedAt ? 3 : p.emailedAt ? 2 : p.emails.length ? 0 : 1);
+  for (const p of [...prospects].sort((a, b) => rank(a) - rank(b) || a.domain.localeCompare(b.domain))) {
+    const tr = document.createElement('tr');
+
+    const who = document.createElement('td');
+    who.className = 'name';
+    const label = document.createElement('div');
+    label.textContent = p.name || p.domain; // portal-free, but still not ours: textContent
+    const host = document.createElement('a');
+    host.href = p.url;
+    host.target = '_blank';
+    host.rel = 'noopener noreferrer';
+    host.className = 'muted-link';
+    host.textContent = p.domain;
+    who.append(label, host);
+
+    const contact = document.createElement('td');
+    if (p.emails.length) {
+      const mail = document.createElement('a');
+      mail.href = `mailto:${p.emails[0]}`;
+      mail.textContent = p.emails[0];
+      contact.append(mail);
+      if (p.emails.length > 1) {
+        const extra = document.createElement('span');
+        extra.className = 'muted';
+        extra.textContent = ` +${p.emails.length - 1} more`;
+        contact.append(extra);
+      }
+    } else {
+      contact.className = 'muted';
+      contact.textContent = PROSPECT_STATE[p.status] ?? p.status;
+    }
+
+    const state = document.createElement('td');
+    state.className = 'slice-state';
+    if (p.repliedAt) { state.classList.add('verdict', 'good'); state.textContent = 'replied'; }
+    else if (p.emailedAt) { state.textContent = 'emailed'; state.classList.add('muted'); }
+
+    const actions = document.createElement('td');
+    actions.className = 'row-actions';
+    const act = (text, action, title) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ghost tiny';
+      b.textContent = text;
+      b.title = title;
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        try {
+          renderProspects(await api('/api/prospects/mark', { domain: p.domain, action }));
+        } catch (err) {
+          showError(err.message);
+          b.disabled = false;
+        }
+      });
+      return b;
+    };
+    if (p.repliedAt || p.emailedAt) actions.append(act('undo', 'unmark', 'Clear this'));
+    else if (p.emails.length) {
+      actions.append(act('emailed', 'emailed', 'Mark as written to'));
+      actions.append(act('replied', 'replied', 'They wrote back'));
+    } else if (p.status !== 'skip' && p.status !== 'pending') {
+      // No address to write to, so the only useful verdict is to stop
+      // considering it.
+      actions.append(act('skip', 'skip', 'Stop showing this one as work to do'));
+    }
+    tr.append(who, contact, state, actions);
+    body.append(tr);
+  }
+}
+
+function showError(message) {
+  $('error').textContent = message;
+  $('error').hidden = false;
+}
+
+async function refreshProspects() {
+  try {
+    $('error').hidden = true;
+    renderProspects(await api('/api/prospects'));
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+function wireProspects() {
+  $('prospect-add').addEventListener('click', async () => {
+    const text = $('prospect-input').value;
+    if (text.trim() === '') return;
+    const button = $('prospect-add');
+    button.disabled = true;
+    try {
+      const data = await api('/api/prospects/add', { text });
+      $('prospect-input').value = '';
+      $('prospect-status').textContent = `${data.added} added, ${data.skipped} already known`;
+      renderProspects(data);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $('prospect-find').addEventListener('click', async () => {
+    const button = $('prospect-find');
+    button.disabled = true;
+    // Each site is fetched slowly on purpose, so say so rather than looking hung.
+    $('prospect-status').textContent = 'Visiting sites… a few seconds each';
+    try {
+      const data = await api('/api/prospects/find', {});
+      $('prospect-status').textContent =
+        `Looked up ${data.crawled}. ${data.counts.pending} left.`;
+      renderProspects(data);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+// --- views ---------------------------------------------------------------
+
+function showView(name) {
+  const view = name === 'prospects' ? 'prospects' : 'records';
+  $('view-records').hidden = view !== 'records';
+  $('view-prospects').hidden = view !== 'prospects';
+  // The source picker belongs to the records view only.
+  $('source-field').hidden = view !== 'records';
+  for (const tab of document.querySelectorAll('.tab')) {
+    const on = tab.dataset.view === view;
+    tab.classList.toggle('active', on);
+    tab.setAttribute('aria-selected', String(on));
+  }
+  if (location.hash.slice(1) !== view) history.replaceState(null, '', `#${view}${view === 'records' ? location.search : ''}`);
+  if (view === 'prospects') refreshProspects();
+}
+
 // --- wiring ------------------------------------------------------------
 
 function debounce(fn, ms) {
@@ -465,7 +638,13 @@ async function main() {
     }
   }).observe($('chart').parentElement);
 
+  for (const tab of document.querySelectorAll('.tab')) {
+    tab.addEventListener('click', () => showView(tab.dataset.view));
+  }
+  wireProspects();
+
   await refresh({ push: false });
+  showView(location.hash.slice(1) === 'prospects' ? 'prospects' : 'records');
 }
 
 main().catch((err) => {

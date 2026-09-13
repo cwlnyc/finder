@@ -299,7 +299,9 @@ async function main() {
   await command(flags, positional.slice(1));
 }
 
-main().catch((err) => {
-  console.error(`\n${err.message}`);
-  process.exitCode = 1;
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    console.error(`\n${err.message}`);
+    process.exitCode = 1;
+  });
+}

@@ -12,8 +12,11 @@ import { fileURLToPath } from 'node:url';
 
 import { SOURCES, getSource } from '../records/sources.mjs';
 import { readStore, storePath } from '../records/store.mjs';
-import { completeness, filterRows, presentColumns, presentRows, sliceBreakdown, toCsv, weeklyStats } from '../records/digest.mjs';
+import { completeness, csvCell, filterRows, presentColumns, presentRows, sliceBreakdown, toCsv, weeklyStats } from '../records/digest.mjs';
 import { addDays, today } from '../records/normalize.mjs';
+import { crawlSite } from '../prospects/crawl.mjs';
+import { parseSiteFile } from '../prospects/input.mjs';
+import { addSites, readProspects, updateProspect, writeProspects } from '../prospects/store.mjs';
 
 const WEB_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -26,6 +29,12 @@ const ASSETS = {
 };
 
 const MAX_ROWS = 500; // what the table renders; CSV export is unlimited
+
+// How many sites one "look up" click crawls. Each takes a couple of seconds by
+// design, so a bigger batch would sit past the browser's patience with nothing
+// to show for it. Click again for the next batch.
+const FIND_BATCH = 5;
+const MAX_BODY = 1_000_000;
 
 // Re-reading the JSONL on every keystroke gets expensive once a store is large,
 // so cache per source and invalidate on mtime.
@@ -40,6 +49,40 @@ async function loadStore(sourceId, dataDir) {
   const rows = dataDir ? await readStore(sourceId, dataDir) : await readStore(sourceId);
   cache.set(key, { mtimeMs, rows });
   return rows;
+}
+
+/**
+ * Accept a write only from this page.
+ *
+ * The server has no authentication because it is loopback-only, which still
+ * leaves one hole: any website you happen to be visiting can POST to
+ * localhost. Requiring a same-origin Origin header and a JSON content type
+ * closes it -- a cross-site form post cannot set either.
+ */
+function writeAllowed(req) {
+  const origin = req.headers.origin;
+  if (origin) {
+    let host;
+    try {
+      host = new URL(origin).hostname;
+    } catch {
+      return false;
+    }
+    if (host !== 'localhost' && host !== '127.0.0.1' && host !== '[::1]') return false;
+  }
+  return /^application\/json\b/.test(req.headers['content-type'] ?? '');
+}
+
+async function readJsonBody(req) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_BODY) throw new Error('Request body too large');
+    chunks.push(chunk);
+  }
+  if (size === 0) return {};
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
 function json(res, status, body) {
@@ -181,6 +224,87 @@ async function handleExport(res, params, dataDir) {
   res.end(csv);
 }
 
+// --- prospects ---------------------------------------------------------
+
+function prospectSummary(rows) {
+  return {
+    prospects: rows,
+    counts: {
+      total: rows.length,
+      pending: rows.filter((p) => p.status === 'pending').length,
+      withEmail: rows.filter((p) => p.emails.length > 0).length,
+      emailed: rows.filter((p) => p.emailedAt).length,
+      replied: rows.filter((p) => p.repliedAt).length,
+    },
+  };
+}
+
+async function handleProspects(res, dataDir) {
+  json(res, 200, prospectSummary(await readProspects(dataDir)));
+}
+
+async function handleProspectAdd(res, body, dataDir) {
+  const sites = parseSiteFile(String(body.text ?? ''));
+  if (sites.length === 0) {
+    json(res, 400, { error: 'No usable website addresses in that. One URL per line, or paste a CSV with a website column.' });
+    return;
+  }
+  const result = await addSites(sites, { dir: dataDir });
+  json(res, 200, { ...result, ...prospectSummary(await readProspects(dataDir)) });
+}
+
+async function handleProspectMark(res, body, dataDir) {
+  const now = new Date().toISOString();
+  const changes = {
+    emailed: { emailedAt: now },
+    replied: { repliedAt: now, emailedAt: now },
+    skip: { status: 'skip' },
+    // Undo, for the click you did not mean.
+    unmark: { emailedAt: '', repliedAt: '' },
+  }[body.action];
+  if (!changes) {
+    json(res, 400, { error: `Unknown action '${body.action}'` });
+    return;
+  }
+  try {
+    await updateProspect(String(body.domain ?? ''), changes, { dir: dataDir });
+  } catch (err) {
+    json(res, 404, { error: err.message });
+    return;
+  }
+  json(res, 200, prospectSummary(await readProspects(dataDir)));
+}
+
+async function handleProspectFind(res, dataDir) {
+  const all = await readProspects(dataDir);
+  const queue = all.filter((p) => p.status === 'pending').slice(0, FIND_BATCH);
+  for (const prospect of queue) {
+    const result = await crawlSite(prospect.url);
+    prospect.status = result.status;
+    prospect.emails = result.emails.map((e) => e.email);
+    prospect.crawledAt = new Date().toISOString();
+    prospect.notes = result.error || '';
+  }
+  await writeProspects(all, dataDir);
+  json(res, 200, { crawled: queue.length, ...prospectSummary(await readProspects(dataDir)) });
+}
+
+async function handleProspectExport(res, dataDir) {
+  const rows = (await readProspects(dataDir)).filter((p) => p.emails.length > 0 && !p.emailedAt);
+  const cols = ['name', 'domain', 'email', 'other_emails', 'website'];
+  const lines = [cols.join(',')];
+  for (const p of rows) {
+    lines.push([p.name, p.domain, p.emails[0], p.emails.slice(1).join(' '), p.url].map(csvCell).join(','));
+  }
+  const csv = lines.join('\r\n') + '\r\n';
+  res.writeHead(200, {
+    'content-type': 'text/csv; charset=utf-8',
+    'content-disposition': `attachment; filename="prospects-${today()}.csv"`,
+    'content-length': Buffer.byteLength(csv),
+  });
+  res.end(csv);
+}
+
 async function handleAsset(res, pathname) {
   const [file, type] = ASSETS[pathname];
   const body = await readFile(join(WEB_DIR, file));
@@ -196,14 +320,28 @@ export function createApp({ dataDir } = {}) {
     const url = new URL(req.url, 'http://localhost');
 
     try {
+      if (req.method === 'POST') {
+        if (!writeAllowed(req)) {
+          json(res, 403, { error: 'Writes are accepted only from this page.' });
+          return;
+        }
+        const body = await readJsonBody(req);
+        if (url.pathname === '/api/prospects/add') return await handleProspectAdd(res, body, dataDir);
+        if (url.pathname === '/api/prospects/mark') return await handleProspectMark(res, body, dataDir);
+        if (url.pathname === '/api/prospects/find') return await handleProspectFind(res, dataDir);
+        json(res, 404, { error: `No route for ${url.pathname}` });
+        return;
+      }
       if (req.method !== 'GET') {
-        json(res, 405, { error: 'Only GET is supported' });
+        json(res, 405, { error: 'Only GET and POST are supported' });
         return;
       }
       if (ASSETS[url.pathname]) return await handleAsset(res, url.pathname);
       if (url.pathname === '/api/sources') return await handleSources(res, dataDir);
       if (url.pathname === '/api/feed') return await handleFeed(res, url.searchParams, dataDir);
       if (url.pathname === '/api/export.csv') return await handleExport(res, url.searchParams, dataDir);
+      if (url.pathname === '/api/prospects') return await handleProspects(res, dataDir);
+      if (url.pathname === '/api/prospects/export.csv') return await handleProspectExport(res, dataDir);
       json(res, 404, { error: `No route for ${url.pathname}` });
     } catch (err) {
       // An unknown ?source= is the caller's mistake, not a server fault.

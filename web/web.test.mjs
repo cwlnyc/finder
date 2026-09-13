@@ -62,9 +62,20 @@ test('an unknown source is a client error, not a server fault', async () => {
   assert.match((await res.json()).error, /Unknown source/);
 });
 
-test('non-GET methods are refused', async () => {
-  const res = await fetch(`${base}/api/feed`, { method: 'POST' });
-  assert.equal(res.status, 405);
+test('methods other than GET and POST are refused', async () => {
+  for (const method of ['PUT', 'DELETE', 'PATCH']) {
+    assert.equal((await fetch(`${base}/api/feed`, { method })).status, 405, method);
+  }
+});
+
+test('POST is only for the prospect write routes', async () => {
+  // A POST to a read-only route must not quietly behave like a GET.
+  const res = await fetch(`${base}/api/feed`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: base },
+    body: '{}',
+  });
+  assert.equal(res.status, 404);
 });
 
 test('an unknown route 404s with a usable message', async () => {
@@ -237,4 +248,86 @@ test('a source with no notion of an active status reports none', async () => {
   const res = await fetch(`${base}/api/feed?source=dob-permits&days=0`);
   const body = await res.json();
   assert.equal(body.dead, null, 'DOB filing statuses are legitimately mixed');
+});
+
+// --- prospects -----------------------------------------------------------
+
+const post = (path, body, headers = {}) =>
+  fetch(base + path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: base, ...headers },
+    body: JSON.stringify(body),
+  });
+
+test('a write without a JSON content type is refused', async () => {
+  // Blocks the one hole a loopback-only server still has: a page you are
+  // visiting POSTing to localhost. A cross-site form cannot set this header.
+  const res = await fetch(`${base}/api/prospects/add`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: 'text=evil.com',
+  });
+  assert.equal(res.status, 403);
+});
+
+test('a write from another origin is refused', async () => {
+  const res = await post('/api/prospects/add', { text: 'evil.com' }, { origin: 'https://evil.example' });
+  assert.equal(res.status, 403);
+  assert.match((await res.json()).error, /only from this page/);
+});
+
+test('adding sites from pasted text dedupes by host', async () => {
+  const res = await post('/api/prospects/add', {
+    text: 'Business,Website\nAcme Ins,acme-test.com\nAcme Again,https://www.acme-test.com/contact\nBeta Ins,beta-test.com',
+  });
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.added, 2, 'the same host twice is one prospect');
+  assert.equal(data.counts.pending, 2);
+});
+
+test('pasting something with no usable address says so', async () => {
+  const res = await post('/api/prospects/add', { text: 'not a url\n\n???' });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /No usable website/);
+});
+
+test('marking emailed sticks, and undo clears it', async () => {
+  let data = await (await post('/api/prospects/mark', { domain: 'acme-test.com', action: 'emailed' })).json();
+  let acme = data.prospects.find((p) => p.domain === 'acme-test.com');
+  assert.ok(acme.emailedAt, 'recorded');
+  assert.equal(data.counts.emailed, 1);
+
+  data = await (await post('/api/prospects/mark', { domain: 'acme-test.com', action: 'unmark' })).json();
+  acme = data.prospects.find((p) => p.domain === 'acme-test.com');
+  assert.equal(acme.emailedAt, '', 'the click you did not mean is undoable');
+  assert.equal(data.counts.emailed, 0);
+});
+
+test('a reply implies the mail that prompted it', async () => {
+  const data = await (await post('/api/prospects/mark', { domain: 'beta-test.com', action: 'replied' })).json();
+  const beta = data.prospects.find((p) => p.domain === 'beta-test.com');
+  assert.ok(beta.repliedAt);
+  assert.ok(beta.emailedAt, 'you cannot get a reply to a mail you never sent');
+});
+
+test('an unknown prospect or action is rejected, not guessed at', async () => {
+  assert.equal((await post('/api/prospects/mark', { domain: 'nope.com', action: 'emailed' })).status, 404);
+  assert.equal((await post('/api/prospects/mark', { domain: 'acme-test.com', action: 'nonsense' })).status, 400);
+});
+
+test('the prospect export leaves out anyone already written to', async () => {
+  await post('/api/prospects/mark', { domain: 'acme-test.com', action: 'unmark' });
+  // Give both an address so they are exportable at all.
+  const before = await (await fetch(`${base}/api/prospects`)).json();
+  assert.equal(before.counts.withEmail, 0, 'nothing crawled in this test, so nothing to export');
+
+  const res = await fetch(`${base}/api/prospects/export.csv`);
+  assert.match(res.headers.get('content-type'), /text\/csv/);
+  assert.match(res.headers.get('content-disposition'), /attachment; filename="prospects-\d{4}-\d{2}-\d{2}\.csv"/);
+  assert.equal((await res.text()).trim(), 'name,domain,email,other_emails,website', 'header only');
+});
+
+test('an unknown POST route is a 404, not a silent success', async () => {
+  assert.equal((await post('/api/prospects/nope', {})).status, 404);
 });
