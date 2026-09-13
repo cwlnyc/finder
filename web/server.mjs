@@ -240,6 +240,10 @@ function prospectSummary(rows) {
       // What the export would actually contain: has an address, not yet written
       // to. Without this the page cannot say why a download would be empty.
       ready: rows.filter((p) => p.emails.length > 0 && !p.emailedAt).length,
+      // Why the rest have no address. Without this a row of zeros looks like
+      // one failure when it is actually three different ones.
+      noEmail: rows.filter((p) => p.status === 'no-email').length,
+      unreachable: rows.filter((p) => p.status === 'unreachable' || p.status === 'bad-url').length,
     },
   };
 }

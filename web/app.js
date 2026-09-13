@@ -478,7 +478,12 @@ function renderProspects(data) {
   renderBuyers(data.buyers, data.searchReady);
   $('pc-total').textContent = counts.total.toLocaleString();
   $('pc-email').textContent = counts.withEmail.toLocaleString();
-  $('pc-pending').textContent = counts.pending ? `${counts.pending} not looked up yet` : '';
+  // Name every bucket, so "0 with an address" always comes with its reason.
+  $('pc-pending').textContent = [
+    counts.pending ? `${counts.pending} not looked up` : '',
+    counts.noEmail ? `${counts.noEmail} no address on site` : '',
+    counts.unreachable ? `${counts.unreachable} unreachable` : '',
+  ].filter(Boolean).join(' · ');
   $('pc-emailed').textContent = counts.emailed.toLocaleString();
   $('pc-replied').textContent = counts.replied ? `${counts.replied} replied` : '';
   // While a run is in flight the button is the stop control, so leave it live.
