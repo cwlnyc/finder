@@ -435,8 +435,45 @@ const PROSPECT_STATE = {
   skip: 'skipped',
 };
 
+let buyers = [];
+let chosenBuyer = null;
+let searchReady = false;
+
+const NO_KEY =
+  'Searching needs a Google Places key. In your terminal: export GOOGLE_PLACES_API_KEY=your_key, ' +
+  'then restart the server. Until then, paste websites below.';
+
+function renderBuyers(list, ready) {
+  if (list?.length) buyers = list;
+  searchReady = Boolean(ready);
+  // Without a key the search cannot work, so do not offer it as if it could.
+  $('buyer-search').disabled = !searchReady;
+  const row = $('buyer-row');
+  if (row.childElementCount > 0) return; // built once; selection is just a class
+  for (const buyer of buyers) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'buyer';
+    chip.textContent = buyer.label;
+    chip.addEventListener('click', () => {
+      chosenBuyer = chosenBuyer === buyer.id ? null : buyer.id;
+      for (const other of row.children) other.classList.toggle('on', other === chip && chosenBuyer);
+      // Typing your own search and picking a preset are the same field; a
+      // preset wins, so clear the box rather than leaving two live inputs.
+      if (chosenBuyer) $('buyer-query').value = '';
+      // The missing-key note has to survive picking a buyer -- it is the thing
+      // standing between them and a working search.
+      const why = chosenBuyer ? buyer.why : '';
+      $('buyer-why').textContent = searchReady ? why : [why, NO_KEY].filter(Boolean).join(' — ');
+    });
+    row.append(chip);
+  }
+  if (!searchReady) $('buyer-why').textContent = NO_KEY;
+}
+
 function renderProspects(data) {
   const { prospects, counts } = data;
+  renderBuyers(data.buyers, data.searchReady);
   $('pc-total').textContent = counts.total.toLocaleString();
   $('pc-email').textContent = counts.withEmail.toLocaleString();
   $('pc-pending').textContent = counts.pending ? `${counts.pending} not looked up yet` : '';
@@ -550,6 +587,42 @@ function wireProspects() {
       showError(err.message);
     } finally {
       button.disabled = false;
+    }
+  });
+
+  const runSearch = async () => {
+    const button = $('buyer-search');
+    const query = $('buyer-query').value.trim();
+    if (!chosenBuyer && !query) {
+      $('prospect-status').textContent = 'Pick a buyer above, or type what to search for.';
+      return;
+    }
+    button.disabled = true;
+    $('prospect-status').textContent = 'Searching Google Places…';
+    try {
+      const data = await api('/api/prospects/search', {
+        buyer: chosenBuyer, query, area: $('buyer-area').value.trim(),
+      });
+      $('prospect-status').textContent =
+        `${data.searched} found · ${data.added} new · ${data.skipped} already known` +
+        (data.withoutWebsite ? ` · ${data.withoutWebsite} had no website` : '');
+      renderProspects(data);
+    } catch (err) {
+      showError(err.message);
+      $('prospect-status').textContent = '';
+    } finally {
+      button.disabled = false;
+    }
+  };
+  $('buyer-search').addEventListener('click', runSearch);
+  $('buyer-query').addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
+  $('buyer-area').addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
+  $('buyer-query').addEventListener('input', () => {
+    // Typing your own query drops the preset, so only one of them is ever live.
+    if ($('buyer-query').value.trim() && chosenBuyer) {
+      chosenBuyer = null;
+      for (const chip of $('buyer-row').children) chip.classList.remove('on');
+      $('buyer-why').textContent = '';
     }
   });
 

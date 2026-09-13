@@ -272,3 +272,134 @@ test('contact links are matched however the site spells them', () => {
   const links = findContactLinks(html, 'https://acme.com/', { max: 9 });
   assert.equal(links.length, 4, 'every spelling is followed');
 });
+
+// --- google places -----------------------------------------------------
+
+import { BUYER_PRESETS, getPreset, PlacesError, searchPlaces } from './places.mjs';
+
+const placesReply = (payload, status = 200) => async () => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => payload,
+});
+
+const onePlace = (over = {}) => ({
+  id: 'ChIJtest', displayName: { text: 'Sterling Insurance', languageCode: 'en' },
+  formattedAddress: '1 Main St, Brooklyn, NY 11218, USA',
+  websiteUri: 'https://sterlingins.example', nationalPhoneNumber: '(718) 555-0100',
+  ...over,
+});
+
+test('a search returns businesses with their websites', async () => {
+  const result = await searchPlaces('insurance broker Brooklyn', {
+    apiKey: 'k',
+    fetchImpl: placesReply({ places: [onePlace(), onePlace({ id: 'b', displayName: { text: 'Boro' }, websiteUri: 'https://boro.example' })] }),
+  });
+  assert.equal(result.searched, 2);
+  assert.equal(result.places.length, 2);
+  assert.deepEqual(result.places[0], {
+    placeId: 'ChIJtest', name: 'Sterling Insurance', website: 'https://sterlingins.example',
+    phone: '(718) 555-0100', address: '1 Main St, Brooklyn, NY 11218, USA',
+  });
+});
+
+test('businesses with no website are counted, not stored', async () => {
+  // Nothing can be crawled for an address, so keeping them would fill the list
+  // with rows that can never produce a contact.
+  const result = await searchPlaces('q', {
+    apiKey: 'k',
+    fetchImpl: placesReply({ places: [onePlace(), onePlace({ websiteUri: undefined })] }),
+  });
+  assert.equal(result.searched, 2);
+  assert.equal(result.places.length, 1);
+  assert.equal(result.withoutWebsite, 1);
+});
+
+test('the request carries the key and the field mask', async () => {
+  let seen;
+  await searchPlaces('brokers', {
+    apiKey: 'secret-key',
+    fetchImpl: async (url, init) => { seen = { url, init }; return { ok: true, status: 200, json: async () => ({ places: [onePlace()] }) }; },
+  });
+  assert.match(seen.url, /places\.googleapis\.com\/v1\/places:searchText/);
+  assert.equal(seen.init.headers['X-Goog-Api-Key'], 'secret-key');
+  // Without websiteUri in the mask the API omits it and every result looks
+  // website-less -- the single most likely way this breaks.
+  assert.match(seen.init.headers['X-Goog-FieldMask'], /places\.websiteUri/);
+  assert.equal(JSON.parse(seen.init.body).textQuery, 'brokers');
+});
+
+test('a missing key is caught before any request is made', async () => {
+  let called = false;
+  await assert.rejects(
+    () => searchPlaces('x', { apiKey: '', fetchImpl: async () => { called = true; } }),
+    (err) => { assert.ok(err instanceof PlacesError); assert.match(err.message, /GOOGLE_PLACES_API_KEY/); return true; },
+  );
+  assert.equal(called, false, 'no point spending a request to be told the key is missing');
+});
+
+test('each Google failure names its own fix', async () => {
+  const cases = [
+    [403, /Places API \(New\)/, false],
+    [429, /quota/i, true],
+    [400, /field mask/i, false],
+    [503, /trouble/i, true],
+  ];
+  for (const [status, pattern, retryable] of cases) {
+    await assert.rejects(
+      () => searchPlaces('x', { apiKey: 'k', fetchImpl: placesReply({ error: { message: 'nope' } }, status) }),
+      (err) => {
+        assert.match(err.message, pattern, `HTTP ${status}`);
+        assert.equal(err.retryable, retryable, `HTTP ${status} retryable`);
+        return true;
+      },
+    );
+  }
+});
+
+test('an unexpected response shape is reported, not returned empty', async () => {
+  // If Google renames a field, every result arrives nameless and the prospect
+  // list would silently stay empty. Same failure class as a stale field mapping.
+  await assert.rejects(
+    () => searchPlaces('x', {
+      apiKey: 'k',
+      fetchImpl: placesReply({ places: [{ id: 'a', title: 'Renamed Field Co' }] }),
+    }),
+    (err) => {
+      assert.match(err.message, /not what this expects/);
+      assert.match(err.message, /title/, 'lists the keys it actually got');
+      return true;
+    },
+  );
+});
+
+test('a search that finds nothing is not an error', async () => {
+  const result = await searchPlaces('asdkjhasd', { apiKey: 'k', fetchImpl: placesReply({}) });
+  assert.deepEqual(result, { query: 'asdkjhasd', places: [], withoutWebsite: 0, searched: 0 });
+});
+
+test('paging stops at maxResults instead of draining the quota', async () => {
+  let calls = 0;
+  const result = await searchPlaces('q', {
+    apiKey: 'k', maxResults: 3, pageSize: 2,
+    fetchImpl: async () => {
+      calls++;
+      return { ok: true, status: 200, json: async () => ({
+        places: [onePlace({ id: `a${calls}` }), onePlace({ id: `b${calls}` })],
+        nextPageToken: 'more',
+      }) };
+    },
+  });
+  assert.equal(result.searched, 4, 'the page that crossed the cap still counts');
+  assert.ok(calls <= 2, `stopped paging promptly, made ${calls} requests`);
+});
+
+test('every buyer preset is usable and explains itself', () => {
+  assert.ok(BUYER_PRESETS.length >= 5);
+  for (const preset of BUYER_PRESETS) {
+    assert.equal(getPreset(preset.id), preset);
+    assert.ok(preset.query.length > 3, preset.id);
+    assert.ok(preset.why.length > 20, `${preset.id} says why it is a buyer`);
+  }
+  assert.throws(() => getPreset('nope'), /Known:/);
+});

@@ -6,9 +6,11 @@
 // already written to, so nobody gets the same mail twice.
 
 import { readFile, writeFile } from 'node:fs/promises';
-import { crawlSite, normalizeUrl, siteDomain } from './crawl.mjs';
+import { crawlSite } from './crawl.mjs';
 import { addSites, readProspects, storePath, updateProspect, writeProspects } from './store.mjs';
 import { parseSiteFile } from './input.mjs';
+import { BUYER_PRESETS, getPreset, searchPlaces } from './places.mjs';
+import { normalizeUrl, siteDomain } from './crawl.mjs';
 import { csvCell } from '../records/digest.mjs';
 
 function parseArgs(argv) {
@@ -49,6 +51,46 @@ async function cmdAdd(flags, positional) {
   console.log(`${sites.length} sites read   ${result.added} new   ${result.skipped} already known`);
   console.log(`  -> ${storePath()}`);
   if (result.added) console.log(`\nNext:  node prospects/cli.mjs find`);
+}
+
+async function cmdBuyers() {
+  for (const preset of BUYER_PRESETS) {
+    console.log(`${preset.id.padEnd(12)}${preset.label}`);
+    console.log(`            search: "${preset.query}"`);
+    console.log(`            ${preset.why}\n`);
+  }
+  console.log('Use one:  node prospects/cli.mjs search --buyer insurance --area "Brooklyn NY"');
+}
+
+async function cmdSearch(flags, positional) {
+  const area = flags.area === true ? '' : (flags.area ?? '');
+  const term = flags.buyer ? getPreset(flags.buyer).query : positional.join(' ');
+  if (!term) {
+    throw new Error('Usage: search "commercial insurance broker" --area "Brooklyn NY"\n   or: search --buyer insurance --area "Brooklyn NY"');
+  }
+  const query = [term, area].filter(Boolean).join(' ');
+
+  console.log(`Searching Google Places for: ${query}`);
+  const result = await searchPlaces(query, { maxResults: num(flags.max, 40) });
+  if (result.places.length === 0) {
+    console.log(result.searched === 0
+      ? '  Nothing found. Try a broader area or a plainer term.'
+      : `  ${result.searched} businesses found, none with a website — nothing to look up.`);
+    return;
+  }
+
+  const sites = [];
+  for (const place of result.places) {
+    const url = normalizeUrl(place.website);
+    const domain = siteDomain(url);
+    if (domain) sites.push({ url, domain, name: place.name });
+  }
+  const added = await addSites(sites, {});
+  console.log(
+    `  ${result.searched} found   ${result.withoutWebsite} without a website   ` +
+      `${added.added} new   ${added.skipped} already known`,
+  );
+  console.log(`\nNext:  node prospects/cli.mjs find`);
 }
 
 async function cmdFind(flags) {
@@ -153,14 +195,20 @@ async function cmdExport(flags) {
 const USAGE = `
 Find who to sell the list to
 
+  node prospects/cli.mjs buyers           who might buy your data, and why
+  node prospects/cli.mjs search --buyer insurance --area "Brooklyn NY"
   node prospects/cli.mjs add <file>        a .txt of URLs, or a CSV with a website column
   node prospects/cli.mjs find [--limit 25] look up contact addresses
   node prospects/cli.mjs list [--found]    what you have
   node prospects/cli.mjs mark <domain> --emailed
   node prospects/cli.mjs export --csv out.csv
 
+Needs a key for search:  export GOOGLE_PLACES_API_KEY=...
+(console.cloud.google.com, enable "Places API (New)")
+
 Typical run:
-  node prospects/cli.mjs add brokers.csv
+  node prospects/cli.mjs search --buyer insurance --area "Brooklyn NY"
+
   node prospects/cli.mjs find
   node prospects/cli.mjs export --csv brokers-to-email.csv
   ...send the mail, then...
@@ -169,7 +217,10 @@ Typical run:
 export skips anyone already marked emailed, so nobody gets it twice.
 `;
 
-const COMMANDS = { add: cmdAdd, find: cmdFind, list: cmdList, mark: cmdMark, export: cmdExport };
+const COMMANDS = {
+  buyers: cmdBuyers, search: cmdSearch, add: cmdAdd,
+  find: cmdFind, list: cmdList, mark: cmdMark, export: cmdExport,
+};
 
 async function main() {
   const { flags, positional } = parseArgs(process.argv.slice(2));

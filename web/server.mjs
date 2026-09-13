@@ -17,6 +17,8 @@ import { addDays, today } from '../records/normalize.mjs';
 import { crawlSite } from '../prospects/crawl.mjs';
 import { parseSiteFile } from '../prospects/input.mjs';
 import { addSites, readProspects, updateProspect, writeProspects } from '../prospects/store.mjs';
+import { BUYER_PRESETS, PlacesError, searchPlaces } from '../prospects/places.mjs';
+import { normalizeUrl, siteDomain } from '../prospects/crawl.mjs';
 
 const WEB_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -240,7 +242,49 @@ function prospectSummary(rows) {
 }
 
 async function handleProspects(res, dataDir) {
-  json(res, 200, prospectSummary(await readProspects(dataDir)));
+  json(res, 200, {
+    ...prospectSummary(await readProspects(dataDir)),
+    buyers: BUYER_PRESETS,
+    // The key itself never leaves the server; the page only needs to know
+    // whether searching is possible so it can say what to do when it is not.
+    searchReady: Boolean(process.env.GOOGLE_PLACES_API_KEY),
+  });
+}
+
+async function handleProspectSearch(res, body, dataDir) {
+  const preset = BUYER_PRESETS.find((p) => p.id === body.buyer);
+  const term = preset ? preset.query : String(body.query ?? '').trim();
+  const area = String(body.area ?? '').trim();
+  if (!term) {
+    json(res, 400, { error: 'Nothing to search for. Pick a buyer or type what to look for.' });
+    return;
+  }
+
+  let result;
+  try {
+    result = await searchPlaces([term, area].filter(Boolean).join(' '), { maxResults: 40 });
+  } catch (err) {
+    // A Places failure is the caller's to fix (key, quota, query) -- report it
+    // as such rather than as a broken server.
+    json(res, err instanceof PlacesError ? 400 : 500, { error: err.message });
+    return;
+  }
+
+  const sites = [];
+  for (const place of result.places) {
+    const url = normalizeUrl(place.website);
+    const domain = siteDomain(url);
+    if (domain) sites.push({ url, domain, name: place.name });
+  }
+  const added = await addSites(sites, { dir: dataDir });
+
+  json(res, 200, {
+    searched: result.searched,
+    withoutWebsite: result.withoutWebsite,
+    added: added.added,
+    skipped: added.skipped,
+    ...prospectSummary(await readProspects(dataDir)),
+  });
 }
 
 async function handleProspectAdd(res, body, dataDir) {
@@ -327,6 +371,7 @@ export function createApp({ dataDir } = {}) {
         }
         const body = await readJsonBody(req);
         if (url.pathname === '/api/prospects/add') return await handleProspectAdd(res, body, dataDir);
+        if (url.pathname === '/api/prospects/search') return await handleProspectSearch(res, body, dataDir);
         if (url.pathname === '/api/prospects/mark') return await handleProspectMark(res, body, dataDir);
         if (url.pathname === '/api/prospects/find') return await handleProspectFind(res, dataDir);
         json(res, 404, { error: `No route for ${url.pathname}` });

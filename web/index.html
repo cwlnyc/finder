@@ -160,10 +160,29 @@
       </p>
     </div>
     <div class="add-box">
+      <div class="finder">
+        <div class="buyer-row" id="buyer-row"></div>
+        <div class="finder-controls">
+          <label class="field grow">
+            <span>Or search for</span>
+            <input id="buyer-query" type="search" placeholder="commercial insurance broker">
+          </label>
+          <label class="field grow">
+            <span>Area</span>
+            <input id="buyer-area" type="search" placeholder="Brooklyn NY" value="Brooklyn NY">
+          </label>
+          <button type="button" id="buyer-search" class="button">Find businesses</button>
+        </div>
+        <p class="muted" id="buyer-why"></p>
+      </div>
+
+      <details class="paste">
+        <summary>Or paste websites yourself</summary>
       <textarea id="prospect-input" rows="4" spellcheck="false"
         placeholder="One website per line — sterlingins.com&#10;or paste a CSV with a website column"></textarea>
+      </details>
       <div class="add-actions">
-        <button type="button" id="prospect-add" class="button">Add sites</button>
+        <button type="button" id="prospect-add" class="ghost">Add pasted sites</button>
         <button type="button" id="prospect-find" class="ghost">Look up addresses</button>
         <a id="prospect-export" class="ghost" href="/api/prospects/export.csv" download>Download CSV</a>
         <span class="muted" id="prospect-status"></span>

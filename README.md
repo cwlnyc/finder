@@ -255,16 +255,33 @@ legitimately mixed) omit `activeStatus` and get no warning.
 `prospects/` is the other half: the contractor list is what you sell, this finds
 the people who buy it (insurance brokers, suppliers, bookkeepers).
 
-Google Maps — or any tool that lists local businesses — gives you names and
-websites but **never email addresses**; no such field exists in the Places API.
-This turns those websites into contact addresses.
+Two halves: find the businesses, then find their addresses.
+
+**Finding them** uses the Google Places API (New). One `searchText` call returns
+name, address, phone and website together — the legacy Places API needed a
+second Details call per result, which is 20x the quota for the same answer.
+Needs a key:
+
+```bash
+export GOOGLE_PLACES_API_KEY=your_key   # console.cloud.google.com -> enable "Places API (New)"
+```
+
+**Finding their addresses** is this repo's own crawler, because Places has no
+email field — none exists in the API, and never has.
+
+Six buyer presets ship with it (`node prospects/cli.mjs buyers`), each with the
+reason that business wants a feed of newly licensed contractors. Insurance
+brokers lead because NYC legally requires a contractor to carry liability
+cover, so a new licence is a guaranteed purchase with a renewing commission.
 
 The **Prospects tab** at http://localhost:4000#prospects does all of it: paste
 websites, click *Look up addresses*, mark people emailed as you go, download the
 CSV. Everything below is the same thing from the terminal.
 
 ```bash
-node prospects/cli.mjs add brokers.csv      # a .txt of URLs, or a CSV with a website column
+node prospects/cli.mjs buyers               # who buys this, and why
+node prospects/cli.mjs search --buyer insurance --area "Brooklyn NY"
+node prospects/cli.mjs add brokers.csv      # or paste your own: .txt of URLs / CSV
 node prospects/cli.mjs find                 # visit each site, pull contact addresses
 node prospects/cli.mjs list --found
 node prospects/cli.mjs export --csv send.csv
@@ -298,6 +315,13 @@ twice. That log is the point of the whole thing.
 
 These limits are deliberate. The targets are small firms on shared hosting, and
 finding twenty contacts is not worth degrading someone's website.
+
+### Places terms
+
+Google restricts how long its Places content may be cached and forbids building
+a redistributable database from it. Looking up your own prospects is ordinary
+use; the contractor records are what you sell, and they are separate public
+data. Don't mix the two files.
 
 ### Before you email anyone
 
