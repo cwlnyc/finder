@@ -83,6 +83,39 @@ export async function addSites(sites, { dir = DATA_DIR, now } = {}) {
   return { added, skipped, total: byDomain.size };
 }
 
+/**
+ * The prospects an export should contain: has an address, not yet written to,
+ * and each address only once.
+ *
+ * Two cleanups that matter more than they look:
+ *
+ * - Places lists one firm under several entries -- a product landing page and
+ *   the firm's own site -- which are different domains sharing one inbox.
+ *   Deduping by domain alone lets the same person be mailed twice, which is
+ *   precisely what the outreach log exists to prevent.
+ * - Addresses on somebody else's domain were on the page but are not this
+ *   business's. A broker's claims page lists the intake desk of every insurer
+ *   they file with, and mailing a pitch to Chubb's claims queue is worse than
+ *   sending nothing.
+ */
+export function exportable(prospects) {
+  const seenEmail = new Set();
+  const out = [];
+  for (const p of prospects) {
+    if (p.emails.length === 0 || p.emailedAt) continue;
+    const primary = p.emails[0];
+    const key = primary.toLowerCase();
+    if (seenEmail.has(key)) continue;
+    seenEmail.add(key);
+    out.push({
+      ...p,
+      primary,
+      others: p.emails.slice(1).filter((e) => e.toLowerCase().endsWith(`@${p.domain.toLowerCase()}`)),
+    });
+  }
+  return out;
+}
+
 /** Apply `changes` to one prospect, matched by domain or a unique prefix. */
 export async function updateProspect(match, changes, { dir = DATA_DIR } = {}) {
   const rows = await readProspects(dir);

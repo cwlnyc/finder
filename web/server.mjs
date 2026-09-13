@@ -16,7 +16,7 @@ import { completeness, csvCell, filterRows, presentColumns, presentRows, sliceBr
 import { addDays, today } from '../records/normalize.mjs';
 import { crawlSite } from '../prospects/crawl.mjs';
 import { parseSiteFile } from '../prospects/input.mjs';
-import { addSites, readProspects, updateProspect, writeProspects } from '../prospects/store.mjs';
+import { addSites, exportable, readProspects, updateProspect, writeProspects } from '../prospects/store.mjs';
 import { BUYER_PRESETS, PlacesError, searchPlaces } from '../prospects/places.mjs';
 import { normalizeUrl, siteDomain } from '../prospects/crawl.mjs';
 
@@ -239,7 +239,7 @@ function prospectSummary(rows) {
       replied: rows.filter((p) => p.repliedAt).length,
       // What the export would actually contain: has an address, not yet written
       // to. Without this the page cannot say why a download would be empty.
-      ready: rows.filter((p) => p.emails.length > 0 && !p.emailedAt).length,
+      ready: exportable(rows).length,
       // Why the rest have no address. Without this a row of zeros looks like
       // one failure when it is actually three different ones.
       noEmail: rows.filter((p) => p.status === 'no-email').length,
@@ -341,11 +341,11 @@ async function handleProspectFind(res, dataDir) {
 }
 
 async function handleProspectExport(res, dataDir) {
-  const rows = (await readProspects(dataDir)).filter((p) => p.emails.length > 0 && !p.emailedAt);
+  const rows = exportable(await readProspects(dataDir));
   const cols = ['name', 'domain', 'email', 'other_emails', 'website'];
   const lines = [cols.join(',')];
   for (const p of rows) {
-    lines.push([p.name, p.domain, p.emails[0], p.emails.slice(1).join(' '), p.url].map(csvCell).join(','));
+    lines.push([p.name, p.domain, p.primary, p.others.join(' '), p.url].map(csvCell).join(','));
   }
   const csv = lines.join('\r\n') + '\r\n';
   res.writeHead(200, {

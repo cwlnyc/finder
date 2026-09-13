@@ -7,7 +7,7 @@ import test, { after, before } from 'node:test';
 
 import { extractEmails, findContactLinks, isPlausible } from './extract.mjs';
 import { crawlSite, isAllowed, normalizeUrl, parseRobots, siteDomain } from './crawl.mjs';
-import { addSites, readProspects, updateProspect } from './store.mjs';
+import { addSites, exportable, readProspects, updateProspect } from './store.mjs';
 import { parseSiteFile } from './input.mjs';
 
 // --- extraction --------------------------------------------------------
@@ -402,4 +402,54 @@ test('every buyer preset is usable and explains itself', () => {
     assert.ok(preset.why.length > 20, `${preset.id} says why it is a buyer`);
   }
   assert.throws(() => getPreset('nope'), /Known:/);
+});
+
+// --- what an export should contain -------------------------------------
+
+const prospect = (over) => ({ domain: 'x.com', name: 'X', emails: [], emailedAt: '', ...over });
+
+test('one inbox is exported once, however many listings point at it', () => {
+  // Places lists a firm under a product landing page and under its own site.
+  // Different domains, one inbox -- and mailing that person twice is exactly
+  // what the outreach log exists to prevent.
+  const rows = exportable([
+    prospect({ domain: 'cargovanbrooklyn.shop', name: 'Cargo Van', emails: ['info@rpk.com'] }),
+    prospect({ domain: 'rpk.com', name: 'RPK', emails: ['info@rpk.com'] }),
+    prospect({ domain: 'other.com', name: 'Other', emails: ['hi@other.com'] }),
+  ]);
+  assert.deepEqual(rows.map((r) => r.primary), ['info@rpk.com', 'hi@other.com']);
+});
+
+test('deduping is case-insensitive', () => {
+  const rows = exportable([
+    prospect({ domain: 'a.com', emails: ['Info@Firm.com'] }),
+    prospect({ domain: 'b.com', emails: ['info@firm.com'] }),
+  ]);
+  assert.equal(rows.length, 1);
+});
+
+test('another company\'s addresses never reach the export', () => {
+  // A broker's claims page lists the intake desk of every insurer they file
+  // with. Pitching Chubb's claims queue is worse than sending nothing.
+  const [row] = exportable([prospect({
+    domain: 'levittfuirst.com',
+    emails: ['info@levittfuirst.com', 'claims@levittfuirst.com', 'fnol@nationwide.com', 'cscfnol@chubb.com'],
+  })]);
+  assert.equal(row.primary, 'info@levittfuirst.com');
+  assert.deepEqual(row.others, ['claims@levittfuirst.com'], 'only their own domain');
+});
+
+test('a primary address is kept even when it is off-domain', () => {
+  // Small firms run on gmail, and that is still the address they read.
+  const [row] = exportable([prospect({ domain: 'hdabk.com', emails: ['hdainsurancebk@gmail.com'] })]);
+  assert.equal(row.primary, 'hdainsurancebk@gmail.com');
+});
+
+test('anyone already emailed, or with no address, is left out', () => {
+  const rows = exportable([
+    prospect({ domain: 'sent.com', emails: ['a@sent.com'], emailedAt: '2026-09-13T00:00:00Z' }),
+    prospect({ domain: 'none.com', emails: [] }),
+    prospect({ domain: 'new.com', emails: ['a@new.com'] }),
+  ]);
+  assert.deepEqual(rows.map((r) => r.domain), ['new.com']);
 });

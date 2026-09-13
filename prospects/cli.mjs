@@ -7,7 +7,7 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { crawlSite } from './crawl.mjs';
-import { addSites, readProspects, storePath, updateProspect, writeProspects } from './store.mjs';
+import { addSites, exportable, readProspects, storePath, updateProspect, writeProspects } from './store.mjs';
 import { parseSiteFile } from './input.mjs';
 import { BUYER_PRESETS, getPreset, searchPlaces } from './places.mjs';
 import { normalizeUrl, siteDomain } from './crawl.mjs';
@@ -177,7 +177,9 @@ async function cmdExport(flags) {
   const all = await readProspects();
   // Only what you can actually write to, and only what you have not written to
   // yet -- the whole point of the log is not mailing anyone twice.
-  const rows = all.filter((p) => p.emails.length > 0 && (flags.all ? true : !p.emailedAt));
+  const rows = flags.all
+    ? all.filter((p) => p.emails.length > 0).map((p) => ({ ...p, primary: p.emails[0], others: p.emails.slice(1) }))
+    : exportable(all);
   if (rows.length === 0) {
     console.log(flags.all ? 'No addresses found yet.' : 'Nothing new to send. Use --all to include those already emailed.');
     return;
@@ -185,7 +187,7 @@ async function cmdExport(flags) {
   const cols = ['name', 'domain', 'email', 'other_emails', 'website'];
   const lines = [cols.join(',')];
   for (const p of rows) {
-    lines.push([p.name, p.domain, p.emails[0], p.emails.slice(1).join(' '), p.url].map(csvCell).join(','));
+    lines.push([p.name, p.domain, p.primary, p.others.join(' '), p.url].map(csvCell).join(','));
   }
   const path = flags.csv === true || !flags.csv ? 'prospects.csv' : flags.csv;
   await writeFile(path, lines.join('\r\n') + '\r\n', 'utf8');
