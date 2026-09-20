@@ -351,6 +351,36 @@ a redistributable database from it. Looking up your own prospects is ordinary
 use; the contractor records are what you sell, and they are separate public
 data. Don't mix the two files.
 
+### Sending
+
+`send` writes the same message to everyone who has an address and has not had
+it yet.
+
+```bash
+export GMAIL_USER="you@gmail.com"
+export GMAIL_APP_PASSWORD="16-char app password"   # myaccount.google.com/security
+
+node prospects/cli.mjs send                # prints what would go out; sends nothing
+node prospects/cli.mjs send --send         # actually sends
+```
+
+It is deliberately awkward to misuse:
+
+- **Nothing sends without `--send`.** The default prints the list and the exact
+  message the first person would get.
+- **One message per connection, 60s apart** (`--delay`). A burst of
+  near-identical mail is the pattern that gets a Gmail account flagged, after
+  which every message you ever send is filtered.
+- **25 per run** (`--limit`), so a mistake costs a handful rather than the list.
+- **The log is written after every message**, so Ctrl-C mid-run never re-mails
+  anyone. Anyone already emailed, or marked `--skip`, is never picked up again.
+- **A rejected login stops the run** rather than replaying a bad credential at
+  Gmail sixty times.
+
+Gmail needs an **app password**, not your normal one: turn on 2-Step
+Verification, then create one under "App passwords". Your account's own limit is
+500/day, far above anything this will do.
+
 ### Before you email anyone
 
 Business contact addresses published on a company's own website, used for B2B

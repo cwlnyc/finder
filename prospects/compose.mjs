@@ -9,6 +9,9 @@
 // download from a stranger, no attachment penalty with spam filters, and the
 // reader sees whether it is useful without opening anything.
 
+import { filterRows, presentRows } from '../records/digest.mjs';
+import { readStore } from '../records/store.mjs';
+
 const GMAIL = 'https://mail.google.com/mail/';
 
 export const SUBJECT = 'New contractor licences in NYC — free weekly list';
@@ -21,6 +24,32 @@ export const SAMPLE = {
   excludeBorough: 'Outside NYC',
   max: 12,
 };
+
+/**
+ * The records that go in the mail: the most recent of the slice being sold.
+ *
+ * Most recent rather than "the last seven days", because the city publishes
+ * about three weeks behind -- a window measured from today would usually be
+ * empty and the mail would go out with nothing in it.
+ *
+ * Lives here rather than in the server so the terminal and the page send the
+ * same message; two copies of this drift, and the difference would only ever
+ * show up in somebody's inbox.
+ */
+export async function loadSampleRecords(dataDir) {
+  let rows;
+  try {
+    rows = dataDir ? await readStore(SAMPLE.source, dataDir) : await readStore(SAMPLE.source);
+  } catch {
+    return [];
+  }
+  return presentRows(
+    filterRows(rows, { category: SAMPLE.category, status: SAMPLE.status })
+      .filter((r) => r.borough !== SAMPLE.excludeBorough)
+      .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+      .slice(0, SAMPLE.max),
+  );
+}
 
 // Addresses that are a desk, not a person.
 const ROLE = new Set([

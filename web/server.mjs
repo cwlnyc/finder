@@ -18,7 +18,7 @@ import { crawlSite } from '../prospects/crawl.mjs';
 import { parseSiteFile } from '../prospects/input.mjs';
 import { addSites, exportable, readProspects, updateProspect, writeProspects } from '../prospects/store.mjs';
 import { BUYER_PRESETS, PlacesError, searchPlaces } from '../prospects/places.mjs';
-import { composeUrl, SAMPLE } from '../prospects/compose.mjs';
+import { composeUrl, loadSampleRecords } from '../prospects/compose.mjs';
 import { normalizeUrl, siteDomain } from '../prospects/crawl.mjs';
 
 const WEB_DIR = dirname(fileURLToPath(import.meta.url));
@@ -236,29 +236,6 @@ async function handleExport(res, params, dataDir) {
  * `searchReady` as undefined after any of them and disabled the search button
  * until a reload. Everything that renders the tab now comes from here.
  */
-/**
- * The records that go in the mail: the most recent of the slice being sold.
- *
- * Most recent rather than "the last seven days", because the city publishes
- * about three weeks behind -- a window measured from today would usually be
- * empty and the mail would go out with nothing in it.
- */
-async function loadSampleRecords(dataDir) {
-  let rows;
-  try {
-    rows = dataDir ? await readStore(SAMPLE.source, dataDir) : await readStore(SAMPLE.source);
-  } catch {
-    return [];
-  }
-  const wanted = filterRows(rows, { category: SAMPLE.category, status: SAMPLE.status });
-  return presentRows(
-    wanted
-      .filter((r) => r.borough !== SAMPLE.excludeBorough)
-      .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
-      .slice(0, SAMPLE.max),
-  );
-}
-
 function prospectSummary(rows, sample = []) {
   const ready = exportable(rows);
   return {

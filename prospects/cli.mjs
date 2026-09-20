@@ -12,6 +12,8 @@ import { parseSiteFile } from './input.mjs';
 import { BUYER_PRESETS, getPreset, searchPlaces } from './places.mjs';
 import { normalizeUrl, siteDomain } from './crawl.mjs';
 import { csvCell } from '../records/digest.mjs';
+import { buildBody, loadSampleRecords, SUBJECT } from './compose.mjs';
+import { sendMail, SmtpError } from './smtp.mjs';
 
 function parseArgs(argv) {
   const flags = {};
@@ -194,6 +196,89 @@ async function cmdExport(flags) {
   console.log(`${rows.length} prospects -> ${path}`);
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Send the outreach mail to everyone who has not had it yet.
+ *
+ * Deliberately awkward to misuse:
+ *
+ * - nothing is sent without --send; the default prints what would go out
+ * - one message per connection, with a pause between them, because a burst of
+ *   near-identical mail is exactly the pattern that gets a Gmail account
+ *   flagged and every future message filtered
+ * - a capped batch, so a mistake costs a handful of messages rather than the
+ *   whole list
+ * - the outreach log is checked before each send and written after it, so an
+ *   interrupted run never re-mails anyone
+ */
+async function cmdSend(flags) {
+  const user = process.env.GMAIL_USER;
+  const pass = process.env.GMAIL_APP_PASSWORD;
+  const fromName = flags.name === true ? undefined : (flags.name ?? process.env.GMAIL_FROM_NAME);
+
+  const all = await readProspects();
+  const queue = all
+    .filter((p) => p.emails.length > 0 && !p.emailedAt && p.status !== 'skip')
+    .slice(0, num(flags.limit, 25));
+
+  if (queue.length === 0) {
+    console.log('Nobody to write to. Everyone with an address has had it, or nothing has been looked up yet.');
+    return;
+  }
+
+  const delayMs = Math.max(0, num(flags.delay, 60)) * 1000;
+  // The same records the page embeds, so both send an identical message.
+  const records = await loadSampleRecords();
+
+  if (!flags.send) {
+    console.log(`Would send to ${queue.length}:\n`);
+    for (const p of queue) console.log(`  ${p.emails[0].padEnd(38)}${p.name || p.domain}`);
+    console.log(`\nSubject: ${SUBJECT}`);
+    console.log(`\n${buildBody(queue[0].emails[0], records)}\n`);
+    console.log(`That is the message ${queue[0].emails[0]} would get.`);
+    console.log(`\nNothing was sent. To actually send:  node prospects/cli.mjs send --send`);
+    if (!user || !pass) console.log('You will also need GMAIL_USER and GMAIL_APP_PASSWORD set.');
+    return;
+  }
+
+  if (!user || !pass) {
+    throw new Error(
+      'Set your account first:\n' +
+        '  export GMAIL_USER="you@gmail.com"\n' +
+        '  export GMAIL_APP_PASSWORD="16-char app password"\n' +
+        'The app password comes from myaccount.google.com/security (2-Step Verification must be on).',
+    );
+  }
+
+  console.log(`Sending to ${queue.length}, one every ${delayMs / 1000}s. Ctrl-C stops it safely.\n`);
+  let sent = 0;
+  for (const [i, prospect] of queue.entries()) {
+    const to = prospect.emails[0];
+    process.stdout.write(`  ${String(i + 1).padStart(3)}/${queue.length}  ${to.padEnd(38)}`);
+    try {
+      await sendMail({ user, pass, fromName, to, subject: SUBJECT, body: buildBody(to, records) });
+      prospect.emailedAt = new Date().toISOString();
+      sent++;
+      console.log('sent');
+    } catch (err) {
+      prospect.notes = err.message.split('\n')[0];
+      console.log(err instanceof SmtpError ? `failed — ${prospect.notes}` : `failed — ${err.message}`);
+      // An auth failure will fail identically for everyone; stop rather than
+      // hammer Gmail with the same bad credential.
+      if (err instanceof SmtpError && [535, 534].includes(err.code)) {
+        await writeProspects(all);
+        throw new Error(err.message);
+      }
+    }
+    await writeProspects(all); // after every message: a Ctrl-C must not lose the log
+    if (i < queue.length - 1) await sleep(delayMs);
+  }
+
+  const left = all.filter((p) => p.emails.length > 0 && !p.emailedAt && p.status !== 'skip').length;
+  console.log(`\n${sent} sent. ${left} still to go — run it again tomorrow.`);
+}
+
 const USAGE = `
 Find who to sell the list to
 
@@ -208,20 +293,25 @@ Find who to sell the list to
 Needs a key for search:  export GOOGLE_PLACES_API_KEY=...
 (console.cloud.google.com, enable "Places API (New)")
 
+  node prospects/cli.mjs send [--limit 25] [--delay 60]   preview; add --send to really send
+
+To send, also:
+  export GMAIL_USER="you@gmail.com"
+  export GMAIL_APP_PASSWORD="16-char app password"
+(myaccount.google.com/security — 2-Step Verification must be on first)
+
 Typical run:
   node prospects/cli.mjs search --buyer insurance --area "Brooklyn NY"
-
   node prospects/cli.mjs find
-  node prospects/cli.mjs export --csv brokers-to-email.csv
-  ...send the mail, then...
-  node prospects/cli.mjs mark acmeinsurance.com --emailed
+  node prospects/cli.mjs send                  # preview it
+  node prospects/cli.mjs send --send           # then actually send
 
-export skips anyone already marked emailed, so nobody gets it twice.
+send and export both skip anyone already emailed, so nobody gets it twice.
 `;
 
 const COMMANDS = {
-  buyers: cmdBuyers, search: cmdSearch, add: cmdAdd,
-  find: cmdFind, list: cmdList, mark: cmdMark, export: cmdExport,
+  buyers: cmdBuyers, search: cmdSearch, add: cmdAdd, find: cmdFind,
+  list: cmdList, mark: cmdMark, export: cmdExport, send: cmdSend,
 };
 
 async function main() {
