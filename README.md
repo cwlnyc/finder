@@ -364,6 +364,15 @@ node prospects/cli.mjs send                # prints what would go out; sends not
 node prospects/cli.mjs send --send         # actually sends
 ```
 
+If a round went out by hand — the first one usually does — catch the log up
+before sending anything, or everyone gets it twice:
+
+```bash
+node prospects/cli.mjs mark --all --emailed        # shows who it would mark
+node prospects/cli.mjs mark --all --emailed --yes  # applies it
+node prospects/cli.mjs mark acme.com --unmark      # undo one
+```
+
 It is deliberately awkward to misuse:
 
 - **Nothing sends without `--send`.** The default prints the list and the exact

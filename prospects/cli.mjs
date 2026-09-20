@@ -160,16 +160,51 @@ async function cmdList(flags) {
     `  |  emailed: ${emailed}`);
 }
 
+/**
+ * Catch the log up after a round sent by hand.
+ *
+ * Writing to people outside the tool is normal -- the first round usually
+ * happens in Gmail -- and the log has no way to know. Without this, the next
+ * `send` writes to all of them a second time, which is the one mistake that
+ * actually costs a prospect.
+ */
+async function markEveryone(flags) {
+  const all = await readProspects();
+  const pending = all.filter((p) => p.emails.length > 0 && !p.emailedAt && p.status !== 'skip');
+
+  if (pending.length === 0) {
+    console.log('Everyone with an address is already marked emailed.');
+    return;
+  }
+  if (!flags.yes) {
+    console.log(`Would mark ${pending.length} as already emailed:\n`);
+    for (const p of pending) console.log(`  ${p.emails[0].padEnd(38)}${p.name || p.domain}`);
+    console.log(`\nNothing changed. To apply:  node prospects/cli.mjs mark --all --emailed --yes`);
+    console.log('Undo any single one later with:  mark <domain> --unmark');
+    return;
+  }
+
+  const now = new Date().toISOString();
+  for (const p of pending) p.emailedAt = now;
+  await writeProspects(all);
+  console.log(`${pending.length} marked as emailed. They will not be written to again.`);
+}
+
 async function cmdMark(flags, positional) {
+  if (flags.all) return markEveryone(flags);
+
   const domain = positional[0];
-  if (!domain) throw new Error('Usage: mark <domain> --emailed | --replied | --skip');
+  if (!domain) throw new Error('Usage: mark <domain> --emailed | --replied | --skip | --unmark\n   or: mark --all --emailed');
   const now = new Date().toISOString();
   const changes = {};
   if (flags.emailed) changes.emailedAt = now;
   if (flags.replied) { changes.repliedAt = now; if (!flags.emailed) changes.emailedAt = changes.emailedAt ?? now; }
   if (flags.skip) changes.status = 'skip';
+  if (flags.unmark) { changes.emailedAt = ''; changes.repliedAt = ''; }
   if (flags.note) changes.notes = String(flags.note);
-  if (Object.keys(changes).length === 0) throw new Error('Nothing to change. Pass --emailed, --replied, --skip or --note.');
+  if (Object.keys(changes).length === 0) {
+    throw new Error('Nothing to change. Pass --emailed, --replied, --skip, --unmark or --note.');
+  }
 
   const updated = await updateProspect(domain, changes);
   console.log(`${updated.domain}: ${updated.repliedAt ? 'replied' : updated.emailedAt ? 'emailed' : updated.status}`);
@@ -287,7 +322,8 @@ Find who to sell the list to
   node prospects/cli.mjs add <file>        a .txt of URLs, or a CSV with a website column
   node prospects/cli.mjs find [--limit 25] look up contact addresses
   node prospects/cli.mjs list [--found]    what you have
-  node prospects/cli.mjs mark <domain> --emailed
+  node prospects/cli.mjs mark <domain> --emailed | --replied | --skip | --unmark
+  node prospects/cli.mjs mark --all --emailed     after a round sent by hand
   node prospects/cli.mjs export --csv out.csv
 
 Needs a key for search:  export GOOGLE_PLACES_API_KEY=...
