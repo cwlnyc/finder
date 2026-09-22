@@ -120,8 +120,19 @@ export function exportable(prospects) {
 export async function updateProspect(match, changes, { dir = DATA_DIR } = {}) {
   const rows = await readProspects(dir);
   const needle = String(match).toLowerCase().replace(/^www\./, '');
-  const hits = rows.filter((r) => r.domain === needle || r.domain.startsWith(needle));
-  if (hits.length === 0) throw new Error(`No prospect matching '${match}'`);
+  // An address or an address's domain counts too. The send preview lists
+  // addresses rather than sites, so skipping a wrong-fit one straight off that
+  // list has to work -- and a captive agent's mail usually sits on a carrier
+  // domain with no relation to the website we crawled.
+  const hits = rows.filter((r) => r.domain === needle
+    || r.domain.startsWith(needle)
+    || r.emails.some((e) => {
+      const address = String(e).toLowerCase();
+      return address === needle || address.slice(address.indexOf('@') + 1) === needle;
+    }));
+  if (hits.length === 0) {
+    throw new Error(`No prospect matching '${match}'. Try the address itself, or a domain from: list --new`);
+  }
   if (hits.length > 1) {
     throw new Error(`'${match}' matches ${hits.length}: ${hits.map((h) => h.domain).join(', ')}`);
   }

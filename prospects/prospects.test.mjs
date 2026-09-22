@@ -251,6 +251,22 @@ test('an ambiguous match refuses rather than picking one', async () => {
   });
 });
 
+test('a prospect can be marked by the address the send preview showed', async () => {
+  // The preview lists addresses, so that is what you have in hand when you
+  // spot a wrong-fit one. A captive agent's mail also tends to live on a
+  // carrier domain that the crawled website never mentions.
+  await withTempDir(async (dir) => {
+    await addSites([{ domain: 'mccordagency.com', url: 'https://mccordagency.com/', name: 'McCord' }], { dir });
+    await updateProspect('mccordagency.com', { emails: ['michael_mccord@american-national.com'] }, { dir });
+
+    await updateProspect('michael_mccord@american-national.com', { status: 'skip' }, { dir });
+    assert.equal((await readProspects(dir))[0].status, 'skip', 'the whole address works');
+
+    await updateProspect('american-national.com', { notes: 'captive' }, { dir });
+    assert.equal((await readProspects(dir))[0].notes, 'captive', 'so does the address domain');
+  });
+});
+
 test('a non-default port is part of a site\'s identity', () => {
   // Real sites never carry one -- URL drops :443 and :80 -- so this only ever
   // matters when two services share a host, which is exactly when collapsing
@@ -516,8 +532,27 @@ test('with no records the mail still works, and asks instead of showing', () => 
   // An empty store must not produce a mail promising a list that is not there.
   const body = buildBody('kate@acme.com', []);
   assert.match(body, /^Hi Kate,/);
-  assert.match(body, /Want me to send you this week's\?$/);
+  assert.match(body, /Want me to send you the latest\?/);
   assert.ok(!body.includes('Here\'s the most recent batch'), 'nothing is claimed that is not attached');
+});
+
+test('every mail carries a way out, whether or not it carries records', () => {
+  // Required of commercial mail, and the cheaper of the two ways somebody
+  // leaves: the other one is a spam complaint against the sending account.
+  for (const records of [[], SAMPLE_ROWS]) {
+    const body = buildBody('kate@acme.com', records);
+    assert.match(body, /reply "no thanks"/, 'an opt-out in plain words');
+    assert.ok(body.trimEnd().endsWith('that is the end of it.'), 'and it is the last thing read');
+  }
+});
+
+test('the mail owns the publishing lag instead of implying there is none', () => {
+  // DCWP runs about a month behind. Calling the list weekly while showing
+  // five-week-old dates invites the reader to catch us; saying it outright
+  // reads as knowing the data better than they do.
+  const body = buildBody('kate@acme.com', SAMPLE_ROWS);
+  assert.match(body, /about a month behind/);
+  assert.ok(!body.includes("most won't have sorted it yet"), 'a claim the lag no longer supports');
 });
 
 test('the message says what it is before explaining itself', () => {

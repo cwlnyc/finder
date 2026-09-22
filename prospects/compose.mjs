@@ -77,6 +77,11 @@ export function greetingFor(email) {
   return `Hi ${first[0].toUpperCase()}${first.slice(1)},`;
 }
 
+// CAN-SPAM wants a way out of a commercial mail, and it is self-interest as
+// much as law: someone who can leave in one word does not press "report spam"
+// instead, and a spam complaint costs far more than a lost address.
+const OPT_OUT = 'If you\'d rather not get these, just reply "no thanks" and that is the end of it.';
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** '2026-08-18' -> 'Aug 18'. Never a Date: these are calendar days. */
@@ -104,11 +109,13 @@ export function buildBody(email, records = []) {
   if (records.length === 0) {
     return `${greeting}
 
-I keep an eye on the city's contractor licensing data and pull out whoever's just been licensed. Thought it might be useful to you — they all need liability coverage before they can legally work, and most won't have sorted it yet.
+I keep an eye on the city's contractor licensing data and pull out whoever's just been licensed. Thought it might be useful to you — they all need liability coverage before they can legally work.
 
-It's public DCWP data, nothing clever. I just check it every week so you don't have to.
+It's public DCWP data, nothing clever. The city publishes about a month behind, so what I have is as current as the record gets. I check it every week so you don't have to.
 
-Want me to send you this week's?`;
+Want me to send you the latest?
+
+${OPT_OUT}`;
   }
 
   const days = records.map((r) => r.date).filter(Boolean).sort();
@@ -126,9 +133,11 @@ Here's the most recent batch${span} — ${records.length} newly licensed contrac
 
 ${formatRecords(records)}
 
-They all need liability coverage before they can legally work, and most won't have sorted it yet.
+They all need liability coverage before they can legally work.
 
-It's public DCWP data, nothing clever. I just check it every week so you don't have to. Happy to send you next week's if it's worth having.`;
+It's public DCWP data, nothing clever. The city publishes about a month behind, so this is as current as the record gets anywhere. I check it every week so you don't have to. Happy to send you the next one if it's worth having.
+
+${OPT_OUT}`;
 }
 
 /** A Gmail compose URL with the message already written. */
