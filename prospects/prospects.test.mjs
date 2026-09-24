@@ -472,7 +472,10 @@ test('anyone already emailed, or with no address, is left out', () => {
 
 // --- composing the message ---------------------------------------------
 
-import { buildBody, composeUrl, formatRecords, greetingFor, SUBJECT } from './compose.mjs';
+import {
+  buildBody, buildFollowUp, composeUrl, followUpSubject, formatRecords, greetingFor,
+  isPersonAddress, SUBJECT,
+} from './compose.mjs';
 
 test('an address that belongs to a person gets their name', () => {
   assert.equal(greetingFor('kate@bestmarkinsurance.com'), 'Hi Kate,');
@@ -573,4 +576,52 @@ test('the compose URL carries the records', () => {
   const body = new URL(composeUrl('kate@acme.com', SAMPLE_ROWS)).searchParams.get('body');
   assert.match(body, /Bread Winners/);
   assert.ok(composeUrl('kate@acme.com', SAMPLE_ROWS).length < 8000, 'stays inside a usable URL length');
+});
+
+// --- who is behind an address ------------------------------------------
+
+test('a named address is told apart from a desk', () => {
+  // Decides who gets written to first, so it has to be right in both
+  // directions: a missed person costs the best address on the list, and a
+  // desk promoted to a person wastes the slot it took.
+  for (const address of ['gene@agcommercialrisk.com', 'matt@dsragency.com', 'jen@csaninsurance.com', 'don@bentson.net']) {
+    assert.equal(isPersonAddress(address), true, address);
+  }
+  for (const address of ['info@dcapinsurance.com', 'support@01insurance.com', 'claims@acme.com',
+    'certs@cbli.net', 'coi@clausenagency.com', 'hdainsurancebk@gmail.com', '']) {
+    assert.equal(isPersonAddress(address), false, address);
+  }
+});
+
+test('the greeting and the person test never disagree', () => {
+  // Both read the same address; a mail opening "Hi there," that was queued as
+  // a named human means one of them is wrong.
+  for (const address of ['kate@bestmarkinsurance.com', 'info@acme.com', 'quotes@acme.com', 'j@acme.com']) {
+    assert.equal(greetingFor(address) !== 'Hi there,', isPersonAddress(address), address);
+  }
+});
+
+// --- the second message ------------------------------------------------
+
+test('the follow-up is short, greets the same way, and offers the way out', () => {
+  const body = buildFollowUp('gene@agcommercialrisk.com');
+  assert.match(body, /^Hi Gene,/);
+  assert.match(body, /reply "no thanks"/);
+  assert.ok(body.split('\n').length < 12, 'a nudge, not a second pitch');
+});
+
+test('the follow-up carries no records, because they would be the same ones', () => {
+  // DCWP publishes about a month behind, so a follow-up days later would show
+  // an identical list and point straight at the staleness.
+  const body = buildFollowUp('kate@acme.com');
+  assert.ok(!body.includes('·'), 'no record lines');
+  assert.ok(!/most recent batch/.test(body));
+});
+
+test('"Re:" is used only where the message really threads', () => {
+  // Faking a reply to a message nobody sent is the oldest trick in cold mail,
+  // and it costs the trust every other line is trying to earn.
+  assert.equal(followUpSubject('<abc@gmail.com>'), `Re: ${SUBJECT}`);
+  assert.ok(!followUpSubject('').startsWith('Re:'), 'nothing to thread onto');
+  assert.ok(!followUpSubject(undefined).startsWith('Re:'), 'and none recorded at all');
 });

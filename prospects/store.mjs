@@ -73,6 +73,8 @@ export async function addSites(sites, { dir = DATA_DIR, now } = {}) {
       addedAt: stamp,
       crawledAt: '',
       emailedAt: '',
+      messageId: '',
+      followedUpAt: '',
       repliedAt: '',
       notes: '',
     });

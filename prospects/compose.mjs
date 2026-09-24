@@ -56,25 +56,46 @@ const ROLE = new Set([
   'info', 'sales', 'contact', 'support', 'office', 'mail', 'admin', 'hello', 'team',
   'service', 'claims', 'help', 'enquiries', 'inquiries', 'general', 'quotes', 'billing',
   'auto', 'insurance', 'agency', 'newbusiness', 'customerservice', 'acquisitions',
+  // Back-office queues, which read like short first names but answer existing
+  // clients: "certs" and "coi" are both certificate-of-insurance desks.
+  'certs', 'cert', 'coi', 'policy', 'policies', 'renewals', 'accounts', 'account',
+  'careers', 'jobs', 'legal', 'privacy', 'noreply', 'orders', 'agent', 'agents',
+  'members', 'notices', 'refunds', 'payments', 'bookings', 'reception',
 ]);
 
 // Substrings that mean the local part is a business name rather than a person's.
 const COMPANYISH = ['insur', 'broker', 'agency', 'group', 'ins', 'quote', 'claim', 'admin', 'team', 'corp'];
 
 /**
- * "Hi Kate," where the address plainly belongs to a person, "Hi there,"
- * otherwise.
+ * The first name an address belongs to, or '' when it belongs to a desk.
  *
  * Deliberately shy: greeting a firm as "Hi Hdainsurancebk," is worse than
- * being generic, so anything long, company-shaped, or role-like falls back.
+ * being generic, so anything long, company-shaped, or role-like returns ''.
  */
-export function greetingFor(email) {
+export function firstNameFrom(email) {
   const localPart = String(email ?? '').split('@')[0].toLowerCase();
-  if (COMPANYISH.some((word) => localPart.includes(word))) return 'Hi there,';
+  if (COMPANYISH.some((word) => localPart.includes(word))) return '';
 
   const first = localPart.split(/[._-]/)[0];
-  if (!/^[a-z]{3,7}$/.test(first) || ROLE.has(first)) return 'Hi there,';
-  return `Hi ${first[0].toUpperCase()}${first.slice(1)},`;
+  if (!/^[a-z]{3,7}$/.test(first) || ROLE.has(first)) return '';
+  return `${first[0].toUpperCase()}${first.slice(1)}`;
+}
+
+/**
+ * Whether an address reaches a person rather than a queue.
+ *
+ * Worth knowing before writing, not just while writing: info@ at an agency
+ * lands in the mailbox that answers customers, where a pitch is closed as the
+ * wrong kind of enquiry. The same address at a one-person shop is the owner.
+ * Same test either way -- this is the one greetingFor already applies, used to
+ * decide who to write to rather than only how to open.
+ */
+export const isPersonAddress = (email) => firstNameFrom(email) !== '';
+
+/** "Hi Kate," where the address plainly belongs to a person, "Hi there," otherwise. */
+export function greetingFor(email) {
+  const name = firstNameFrom(email);
+  return name ? `Hi ${name},` : 'Hi there,';
 }
 
 // CAN-SPAM wants a way out of a commercial mail, and it is self-interest as
@@ -154,4 +175,39 @@ export function composeUrl(email, records = [], { subject = SUBJECT } = {}) {
     body: buildBody(address, records),
   });
   return `${GMAIL}?${params}`;
+}
+
+// --- the second message -------------------------------------------------
+//
+// Most people who ever answer a cold message answer the second or third one,
+// not the first. One email is not outreach, it is a coin toss.
+//
+// Short on purpose, and carries no records: the city publishes about a month
+// behind, so a follow-up sent days later would show the identical rows and
+// draw attention to exactly the wrong thing.
+
+/** Used when the first message's Message-ID was never recorded, so nothing can thread. */
+export const FOLLOW_UP_SUBJECT = 'Following up — NYC contractor licences';
+
+/**
+ * The subject for a follow-up.
+ *
+ * "Re:" only where the message genuinely threads onto the first one. Faking it
+ * on a message the recipient never replied to is the oldest trick in cold
+ * mail, everyone recognises it, and it is the kind of thing that makes a
+ * person distrust everything else in the message.
+ */
+export function followUpSubject(inReplyTo) {
+  return inReplyTo ? `Re: ${SUBJECT}` : FOLLOW_UP_SUBJECT;
+}
+
+/** Three lines: a reminder, the offer again, and a way out. */
+export function buildFollowUp(email) {
+  return `${greetingFor(email)}
+
+I sent you a list of newly licensed NYC contractors last week. Following up once in case it landed at a busy moment.
+
+The offer stands — I pull the new DCWP licences every week and can send them to you as they come. Free, and no catch I am hiding.
+
+${OPT_OUT}`;
 }

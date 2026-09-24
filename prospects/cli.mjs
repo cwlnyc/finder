@@ -12,7 +12,9 @@ import { parseSiteFile } from './input.mjs';
 import { BUYER_PRESETS, getPreset, searchPlaces } from './places.mjs';
 import { normalizeUrl, siteDomain } from './crawl.mjs';
 import { csvCell } from '../records/digest.mjs';
-import { buildBody, loadSampleRecords, SUBJECT } from './compose.mjs';
+import {
+  buildBody, buildFollowUp, followUpSubject, isPersonAddress, loadSampleRecords, SUBJECT,
+} from './compose.mjs';
 import { sendMail, SmtpError } from './smtp.mjs';
 
 function parseArgs(argv) {
@@ -145,6 +147,7 @@ async function cmdList(flags) {
   const rows = all
     .filter((p) => (wanted ? p.status === wanted : true))
     .filter((p) => (flags.emailed ? p.emailedAt : flags.new ? !p.emailedAt : true))
+    .filter((p) => !flags.people || (p.emails.length > 0 && isPersonAddress(p.emails[0])))
     .filter((p) => (flags.found ? p.emails.length > 0 : true));
 
   for (const p of rows) {
@@ -155,9 +158,11 @@ async function cmdList(flags) {
 
   const counts = all.reduce((acc, p) => ({ ...acc, [p.status]: (acc[p.status] ?? 0) + 1 }), {});
   const emailed = all.filter((p) => p.emailedAt).length;
+  const awaiting = all.filter((p) => p.emailedAt && !p.repliedAt && !p.followedUpAt
+    && p.emails.length > 0 && p.status !== 'skip').length;
   console.log(`\n${rows.length} shown of ${all.length}. ` +
     Object.entries(counts).map(([k, v]) => `${STATUS_LABEL[k] ?? k}: ${v}`).join('  ') +
-    `  |  emailed: ${emailed}`);
+    `  |  emailed: ${emailed}  to follow up: ${awaiting}`);
 }
 
 /**
@@ -252,27 +257,52 @@ async function cmdSend(flags) {
   const pass = process.env.GMAIL_APP_PASSWORD;
   const fromName = flags.name === true ? undefined : (flags.name ?? process.env.GMAIL_FROM_NAME);
 
+  const followUp = Boolean(flags.followup);
   const all = await readProspects();
-  const queue = all
-    .filter((p) => p.emails.length > 0 && !p.emailedAt && p.status !== 'skip')
+  const reachable = all.filter((p) => p.emails.length > 0 && p.status !== 'skip');
+  // A follow-up goes to someone who has had the first message and not answered
+  // it. Anyone who replied is out: they are a conversation now, not a queue.
+  const waiting = followUp
+    ? reachable.filter((p) => p.emailedAt && !p.repliedAt && !p.followedUpAt)
+    : reachable.filter((p) => !p.emailedAt);
+  const wanted = flags.people ? waiting.filter((p) => isPersonAddress(p.emails[0])) : waiting;
+  // People before desks even without --people: a named address at a small
+  // agency is usually the owner, and info@ is usually a customer-service queue
+  // where a pitch gets closed as the wrong kind of enquiry. Costs nothing to
+  // spend the daily cap on the better half first. Array.sort is stable, so
+  // everything else keeps the order it had.
+  const queue = [...wanted]
+    .sort((a, b) => Number(isPersonAddress(b.emails[0])) - Number(isPersonAddress(a.emails[0])))
     .slice(0, num(flags.limit, 25));
 
   if (queue.length === 0) {
-    console.log('Nobody to write to. Everyone with an address has had it, or nothing has been looked up yet.');
+    if (flags.people && waiting.length > 0) {
+      console.log(`No person-shaped addresses left. ${waiting.length} desk address${waiting.length === 1 ? '' : 'es'} waiting — drop --people to write to those.`);
+    } else if (followUp) {
+      console.log('Nobody to follow up with. Everyone who was emailed has replied, or has already had a second message.');
+    } else {
+      console.log('Nobody to write to. Everyone with an address has had it, or nothing has been looked up yet.');
+    }
     return;
   }
 
   const delayMs = Math.max(0, num(flags.delay, 60)) * 1000;
-  // The same records the page embeds, so both send an identical message.
-  const records = await loadSampleRecords();
+  // The same records the page embeds, so both send an identical message. A
+  // follow-up carries none, so it does not need them.
+  const records = followUp ? [] : await loadSampleRecords();
+  const messageFor = (p) => (followUp ? buildFollowUp(p.emails[0]) : buildBody(p.emails[0], records));
+  const subjectFor = (p) => (followUp ? followUpSubject(p.messageId) : SUBJECT);
 
   if (!flags.send) {
-    console.log(`Would send to ${queue.length}:\n`);
-    for (const p of queue) console.log(`  ${p.emails[0].padEnd(38)}${p.name || p.domain}`);
-    console.log(`\nSubject: ${SUBJECT}`);
-    console.log(`\n${buildBody(queue[0].emails[0], records)}\n`);
+    const people = queue.filter((p) => isPersonAddress(p.emails[0])).length;
+    console.log(`Would ${followUp ? 'follow up with' : 'send to'} ${queue.length} (${people} to a person, ${queue.length - people} to a desk):\n`);
+    for (const p of queue) {
+      console.log(`  ${isPersonAddress(p.emails[0]) ? '*' : ' '} ${p.emails[0].padEnd(38)}${p.name || p.domain}`);
+    }
+    console.log(`\nSubject: ${subjectFor(queue[0])}`);
+    console.log(`\n${messageFor(queue[0])}\n`);
     console.log(`That is the message ${queue[0].emails[0]} would get.`);
-    console.log(`\nNothing was sent. To actually send:  node prospects/cli.mjs send --send`);
+    console.log(`\nNothing was sent. To actually send:  node prospects/cli.mjs send${followUp ? ' --followup' : ''} --send`);
     if (!user || !pass) console.log('You will also need GMAIL_USER and GMAIL_APP_PASSWORD set.');
     return;
   }
@@ -292,10 +322,23 @@ async function cmdSend(flags) {
     const to = prospect.emails[0];
     process.stdout.write(`  ${String(i + 1).padStart(3)}/${queue.length}  ${to.padEnd(38)}`);
     try {
-      await sendMail({ user, pass, fromName, to, subject: SUBJECT, body: buildBody(to, records) });
-      prospect.emailedAt = new Date().toISOString();
+      const result = await sendMail({
+        user, pass, fromName, to,
+        subject: subjectFor(prospect),
+        body: messageFor(prospect),
+        // Only where the first message's id was recorded. Without it the
+        // subject is not "Re:" either, so nothing claims a thread that the
+        // recipient's client cannot show.
+        inReplyTo: followUp ? (prospect.messageId || undefined) : undefined,
+      });
+      if (followUp) {
+        prospect.followedUpAt = new Date().toISOString();
+      } else {
+        prospect.emailedAt = new Date().toISOString();
+        prospect.messageId = result.messageId; // so a follow-up can thread onto it
+      }
       sent++;
-      console.log('sent');
+      console.log(followUp && prospect.messageId ? 'sent (threaded)' : 'sent');
     } catch (err) {
       prospect.notes = err.message.split('\n')[0];
       console.log(err instanceof SmtpError ? `failed — ${prospect.notes}` : `failed — ${err.message}`);
@@ -310,7 +353,8 @@ async function cmdSend(flags) {
     if (i < queue.length - 1) await sleep(delayMs);
   }
 
-  const left = all.filter((p) => p.emails.length > 0 && !p.emailedAt && p.status !== 'skip').length;
+  const left = all.filter((p) => p.emails.length > 0 && p.status !== 'skip'
+    && (followUp ? p.emailedAt && !p.repliedAt && !p.followedUpAt : !p.emailedAt)).length;
   console.log(`\n${sent} sent. ${left} still to go — run it again tomorrow.`);
 }
 
@@ -321,7 +365,7 @@ Find who to sell the list to
   node prospects/cli.mjs search --buyer insurance --area "Brooklyn NY"
   node prospects/cli.mjs add <file>        a .txt of URLs, or a CSV with a website column
   node prospects/cli.mjs find [--limit 25] look up contact addresses
-  node prospects/cli.mjs list [--found]    what you have
+  node prospects/cli.mjs list [--found] [--new] [--people]   what you have
   node prospects/cli.mjs mark <domain> --emailed | --replied | --skip | --unmark
   node prospects/cli.mjs mark --all --emailed     after a round sent by hand
   node prospects/cli.mjs export --csv out.csv
@@ -330,6 +374,11 @@ Needs a key for search:  export GOOGLE_PLACES_API_KEY=...
 (console.cloud.google.com, enable "Places API (New)")
 
   node prospects/cli.mjs send [--limit 25] [--delay 60]   preview; add --send to really send
+  node prospects/cli.mjs send --followup                 a second message to whoever never answered
+  node prospects/cli.mjs send --people                   named humans only, skipping info@ and friends
+
+Named addresses go first either way (marked * in the preview): info@ at an
+agency is usually the queue that answers customers, not anyone who buys.
 
 To send, also:
   export GMAIL_USER="you@gmail.com"

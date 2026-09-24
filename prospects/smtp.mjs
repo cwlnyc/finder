@@ -83,7 +83,7 @@ export function encodeHeader(value) {
 }
 
 /** The message as it goes on the wire. */
-export function buildMessage({ from, fromName, to, subject, body, date = new Date(), id }) {
+export function buildMessage({ from, fromName, to, subject, body, date = new Date(), id, inReplyTo }) {
   const sender = fromName ? `${encodeHeader(fromName)} <${from}>` : from;
   const messageId = id ?? `${Date.now()}.${Math.random().toString(36).slice(2)}`;
   const headers = [
@@ -92,10 +92,17 @@ export function buildMessage({ from, fromName, to, subject, body, date = new Dat
     `Subject: ${encodeHeader(subject)}`,
     `Date: ${date.toUTCString()}`,
     `Message-ID: <${messageId}@${String(from).split('@')[1]}>`,
+  ];
+  // What makes a follow-up read as the same conversation rather than a second
+  // stranger: the client files it under the first message instead of alone.
+  if (inReplyTo) {
+    headers.push(`In-Reply-To: ${inReplyTo}`, `References: ${inReplyTo}`);
+  }
+  headers.push(
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset=utf-8',
     'Content-Transfer-Encoding: base64',
-  ];
+  );
   // base64 sidesteps every question about line length and 8-bit characters.
   const encoded = Buffer.from(String(body), 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n');
   return `${headers.join('\r\n')}\r\n\r\n${encoded}`;
@@ -118,6 +125,7 @@ export async function sendMail({
   to,
   subject,
   body,
+  inReplyTo,
   timeoutMs = 20000,
 }) {
   if (!user || !pass) throw new SmtpError('No Gmail account configured. Set GMAIL_USER and GMAIL_APP_PASSWORD.');
@@ -150,7 +158,11 @@ export async function sendMail({
     await say(`RCPT TO:<${to}>`, 'RCPT TO', [250, 251]);
     await say('DATA', 'DATA', [354]);
 
-    const message = buildMessage({ from, fromName, to, subject, body });
+    // Held rather than left to buildMessage, because the caller has to store it:
+    // a follow-up can only thread onto a message whose id was written down.
+    const id = `${Date.now()}.${Math.random().toString(36).slice(2)}`;
+    const messageId = `<${id}@${String(from).split('@')[1]}>`;
+    const message = buildMessage({ from, fromName, to, subject, body, id, inReplyTo });
     // Dot-stuffing: a line that is just "." would otherwise end the message.
     const safe = message.split('\r\n').map((l) => (l.startsWith('.') ? `.${l}` : l)).join('\r\n');
     await say(`${safe}\r\n.`, 'message', [250]);
@@ -161,7 +173,7 @@ export async function sendMail({
     try {
       await say('QUIT', 'QUIT', [221]);
     } catch { /* closed without a reply; the 250 above is what mattered */ }
-    return { to, ok: true };
+    return { to, ok: true, messageId };
   } finally {
     socket.destroy();
   }

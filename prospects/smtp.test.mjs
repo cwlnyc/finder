@@ -127,6 +127,31 @@ test('the message carries the headers a real client sends', () => {
   assert.match(message, /\r\n\r\n/, 'headers end with a blank line');
 });
 
+test('a follow-up says which message it answers, a first message does not', () => {
+  const threaded = buildMessage({
+    from: 'me@gmail.com', to: 'kate@acme.com', subject: 'Re: Hello', body: 'Hi',
+    date: new Date('2026-09-24T12:00:00Z'), id: 'second', inReplyTo: '<first@gmail.com>',
+  });
+  // Both headers: clients file by References, and some only read In-Reply-To.
+  assert.match(threaded, /\r\nIn-Reply-To: <first@gmail\.com>\r\n/);
+  assert.match(threaded, /\r\nReferences: <first@gmail\.com>\r\n/);
+
+  const first = buildMessage({
+    from: 'me@gmail.com', to: 'kate@acme.com', subject: 'Hello', body: 'Hi',
+    date: new Date('2026-09-24T12:00:00Z'), id: 'first',
+  });
+  assert.ok(!first.includes('In-Reply-To'), 'nothing to answer yet');
+});
+
+test('a send hands back the id its follow-up will need', async () => {
+  // Without this the second message cannot thread, and an unthreaded
+  // follow-up arrives as a second stranger rather than the same conversation.
+  const t = freshTranscript();
+  const result = await send();
+  assert.match(result.messageId, /^<.+@gmail\.com>$/);
+  assert.ok(t.body.includes(`Message-ID: ${result.messageId}`), 'the id returned is the id sent');
+});
+
 test('the body survives the round trip, accents and all', async () => {
   const t = freshTranscript();
   const body = 'Hi Kate,\n\nLicences — “quoted” café.\nLast line.';
